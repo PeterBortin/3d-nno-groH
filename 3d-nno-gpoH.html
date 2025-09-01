@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PVO Simulation with Radar</title>
+<style>
+  body { margin: 0; overflow: hidden; background: black; }
+  canvas { display: block; }
+  #score {
+    position: absolute;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: white;
+    font-family: monospace;
+    font-size: 24px;
+    background: rgba(0,0,0,0.5);
+    padding: 4px 12px;
+    border-radius: 8px;
+  }
+</style>
+</head>
+<body>
+<div id="score">SCORE: 000</div>
+<canvas id="canvas"></canvas>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// Scene setup
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(64, window.innerWidth/window.innerHeight, 0.1, 1000);
+let camPolar = Math.PI/4;
+let camAzim = 0;
+const camRadius = 20;
+camera.position.set(0,6,16);
+camera.lookAt(0,0,0);
+
+const renderer = new THREE.WebGLRenderer({canvas: document.getElementById("canvas")});
+renderer.setSize(window.innerWidth, window.innerHeight);
+
+// Grid
+const gridHelper = new THREE.GridHelper(20, 20, 0xffffff, 0x444444);
+scene.add(gridHelper);
+
+// Radar Gradient Texture
+const radarSize = 512;
+const radarCanvas = document.createElement('canvas');
+radarCanvas.width = radarSize;
+radarCanvas.height = radarSize;
+const radarCtx = radarCanvas.getContext('2d');
+
+function drawRadarGradient(){
+  radarCtx.clearRect(0,0,radarSize,radarSize);
+  const grad = radarCtx.createConicGradient(Math.PI, radarSize/2, radarSize/2);
+  grad.addColorStop(0, 'rgba(0,0,0,0)');
+  grad.addColorStop(0.4, 'rgba(9,20,0,0.08)');
+  grad.addColorStop(1, '#70FF00');
+  radarCtx.fillStyle = grad;
+  radarCtx.fillRect(0,0,radarSize,radarSize);
+}
+drawRadarGradient();
+
+const radarTexture = new THREE.CanvasTexture(radarCanvas);
+radarTexture.rotation = 0;
+radarTexture.center.set(0.5,0.5);
+
+const radarGeometry = new THREE.CircleGeometry(10,64);
+const radarMaterial = new THREE.MeshBasicMaterial({map: radarTexture, transparent:true, opacity:0.25, side:THREE.DoubleSide});
+const radar = new THREE.Mesh(radarGeometry,radarMaterial);
+radar.rotation.x = -Math.PI/2;
+radar.position.y = 0.01;
+scene.add(radar);
+
+// Animate radar rotation (обратно)
+function animateRadar(){
+  radarTexture.rotation -= 0.01;
+}
+
+// PVO
+const pvoGeometry = new THREE.SphereGeometry(0.5,16,16,0,Math.PI*2,0,Math.PI/2);
+const pvoMaterial = new THREE.MeshBasicMaterial({color:0x00ff00});
+const pvo = new THREE.Mesh(pvoGeometry,pvoMaterial);
+pvo.position.set(0,0.25,0);
+scene.add(pvo);
+
+// Houses
+let houses = [];
+function spawnHouses(count=6){
+  houses = [];
+  for(let i=0;i<count;i++){
+    const size = Math.random()*0.5+0.5;
+    const houseGeometry = new THREE.BoxGeometry(size,size,size);
+    const houseMaterial = new THREE.MeshBasicMaterial({color:0xffffff, transparent:true, opacity:0.5});
+    const house = new THREE.Mesh(houseGeometry,houseMaterial);
+    house.position.set((Math.random()-0.5)*16, size/2, (Math.random()-0.5)*16);
+    scene.add(house);
+    houses.push(house);
+    house.userData = {isFlashing:false, flashInterval:null};
+  }
+}
+spawnHouses();
+
+// Drones
+const drones = [];
+function createDrone(){
+  const droneGeometry = new THREE.SphereGeometry(0.2,12,12);
+  const droneMaterial = new THREE.MeshBasicMaterial({color:0xffffff});
+  const drone = new THREE.Mesh(droneGeometry,droneMaterial);
+  let targetHouse = null;
+  if(houses.length>0 && Math.random()<0.6){
+    targetHouse = houses[Math.floor(Math.random()*houses.length)];
+    drone.material.color.set(0xff0000);
+    if(targetHouse.userData.flashInterval===null){
+      targetHouse.userData.isFlashing = true;
+      targetHouse.userData.flashInterval = setInterval(()=>{
+        targetHouse.material.color.set(targetHouse.material.color.getHex()===0xffa500?0xffffff:0xffa500);
+      },200);
+    }
+  }
+  const startX = (Math.random()<0.5?-1:1)*(10 + Math.random()*5);
+  const startZ = (Math.random()<0.5?-1:1)*(10 + Math.random()*5);
+  const startY = 6 + Math.random()*8;
+  drone.position.set(startX,startY,startZ);
+  let dir;
+  if(targetHouse){
+    dir = new THREE.Vector3().subVectors(targetHouse.position,drone.position).normalize();
+  } else {
+    const destX = (Math.random()<0.5?-1:1)*15;
+    const destZ = (Math.random()<0.5?-1:1)*15;
+    const destY = 6 + Math.random()*8;
+    const destination = new THREE.Vector3(destX,destY,destZ);
+    dir = new THREE.Vector3().subVectors(destination,drone.position).normalize();
+  }
+  drone.userData = {
+    target: targetHouse,
+    direction: dir,
+    speed: 0.02 + Math.random()*0.04,
+    hasAttacked:false
+  };
+  scene.add(drone);
+  drones.push(drone);
+}
+
+// Initial drones
+for(let i=0;i<10;i++){createDrone();}
+
+// Rockets
+const rockets = [];
+function launchRocket(target){
+  const rocketGeometry = new THREE.SphereGeometry(0.1,8,8);
+  const rocketMaterial = new THREE.MeshBasicMaterial({color:0xffff00});
+  const rocket = new THREE.Mesh(rocketGeometry,rocketMaterial);
+  rocket.position.copy(pvo.position);
+  rocket.userData = {target};
+  scene.add(rocket);
+  rockets.push(rocket);
+}
+
+// Explosion
+function createExplosion(position){
+  const explosionGeometry = new THREE.SphereGeometry(0.1,16,16);
+  const explosionMaterial = new THREE.MeshBasicMaterial({color:0xffaa00, transparent:true, opacity:0.9});
+  const explosion = new THREE.Mesh(explosionGeometry, explosionMaterial);
+  explosion.position.copy(position);
+  scene.add(explosion);
+  
+  let scale = 0.1;
+  const interval = setInterval(()=>{
+    scale += 0.25;
+    explosion.scale.setScalar(scale);
+    explosion.material.opacity -= 0.05;
+    if(explosion.material.opacity <=0){
+      scene.remove(explosion);
+      clearInterval(interval);
+    }
+  },50);
+}
+
+// Score
+let score = 0;
+function updateScore(){document.getElementById("score").innerText = `SCORE: ${String(score).padStart(3,'0')}`;}
+
+// Controls
+let isDragging = false;
+let previousMousePosition = {x:0,y:0};
+function rotateScene(deltaX,deltaY){
+  camAzim -= deltaX; // инверсия
+  camPolar += deltaY;
+  if(camPolar<0.1) camPolar = 0.1;
+  if(camPolar>Math.PI/2) camPolar = Math.PI/2;
+  camera.position.x = camRadius * Math.sin(camPolar) * Math.sin(camAzim);
+  camera.position.y = camRadius * Math.cos(camPolar);
+  camera.position.z = camRadius * Math.sin(camPolar) * Math.cos(camAzim);
+  camera.lookAt(0,0,0);
+}
+function onPointerDown(event){
+  if(event.button===0){isDragging=true; previousMousePosition.x=event.clientX??event.touches[0].clientX; previousMousePosition.y=event.clientY??event.touches[0].clientY;}
+  else if(event.button===2){if(drones.length>0){let target=drones[Math.floor(Math.random()*drones.length)]; launchRocket(target);}}
+}
+function onPointerMove(event){if(!isDragging) return; const clientX=event.clientX??event.touches[0].clientX; const clientY=event.clientY??event.touches[0].clientY; rotateScene((clientX-previousMousePosition.x)*0.01,(clientY-previousMousePosition.y)*0.01); previousMousePosition.x=clientX; previousMousePosition.y=clientY;}
+function onPointerUp(){isDragging=false;}
+document.addEventListener("mousedown",onPointerDown);
+document.addEventListener("mousemove",onPointerMove);
+document.addEventListener("mouseup",onPointerUp);
+document.addEventListener("contextmenu",(e)=>e.preventDefault());
+
+// Animate
+function animate(){
+  requestAnimationFrame(animate);
+  animateRadar();
+
+  // Drones
+  for(let i=drones.length-1;i>=0;i--){
+    const drone=drones[i];
+    const data=drone.userData;
+    
+    if(data.target && houses.includes(data.target)){
+      const targetPos = data.target.position.clone();
+      if(drone.position.distanceTo(targetPos)<5 && !data.hasAttacked){data.hasAttacked=true; data.speed*=1.5; targetPos.y=0;}
+      const dir = targetPos.clone().sub(drone.position).normalize();
+      drone.position.add(dir.multiplyScalar(data.speed));
+      
+      if(drone.position.distanceTo(targetPos)<0.3){
+        createExplosion(drone.position);
+        scene.remove(drone); drones.splice(i,1);
+        scene.remove(data.target); houses.splice(houses.indexOf(data.target),1);
+        if(data.target.userData.flashInterval){clearInterval(data.target.userData.flashInterval);}
+        score=Math.min(score+1,999); updateScore();
+      }
+    } else {
+      drone.position.add(data.direction.clone().multiplyScalar(data.speed));
+      if(drone.position.y <= 0 || Math.abs(drone.position.x)>30 || Math.abs(drone.position.z)>30){
+        createExplosion(new THREE.Vector3(drone.position.x, Math.max(drone.position.y,0), drone.position.z));
+        scene.remove(drone); drones.splice(i,1);
+      }
+    }
+  }
+  
+  // Rockets
+  for(let i=rockets.length-1;i>=0;i--){
+    const rocket=rockets[i];
+    if(!rocket.userData.target) continue;
+    const dir=rocket.userData.target.position.clone().sub(rocket.position).normalize();
+    rocket.position.add(dir.multiplyScalar(0.4));
+    if(rocket.position.distanceTo(rocket.userData.target.position)<0.3){
+      createExplosion(rocket.position);
+      scene.remove(rocket);
+      rockets.splice(i,1);
+      const target=rocket.userData.target;
+      if(drones.includes(target)){scene.remove(target); drones.splice(drones.indexOf(target),1); score=Math.min(score+1,999); updateScore();}
+    }
+    if(Math.abs(rocket.position.x)>30||Math.abs(rocket.position.z)>30){scene.remove(rocket); rockets.splice(i,1);}
+  }
+  
+  while(drones.length<10){createDrone();}
+  
+  renderer.render(scene,camera);
+}
+animate();
+updateScore();
+
+window.addEventListener("resize",()=>{
+  camera.aspect=window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth,window.innerHeight);
+});
+</script>
+</body>
+</html>

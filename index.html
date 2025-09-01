@@ -193,15 +193,51 @@ function rotateScene(deltaX,deltaY){
   camera.position.z = camRadius * Math.sin(camPolar) * Math.cos(camAzim);
   camera.lookAt(0,0,0);
 }
+
 function onPointerDown(event){
-  if(event.button===0){isDragging=true; previousMousePosition.x=event.clientX??event.touches[0].clientX; previousMousePosition.y=event.clientY??event.touches[0].clientY;}
-  else if(event.button===2){if(drones.length>0){let target=drones[Math.floor(Math.random()*drones.length)]; launchRocket(target);}}
+  if(event.pointerType==='touch'){ // тач
+    isDragging=true; 
+    previousMousePosition.x=event.clientX;
+    previousMousePosition.y=event.clientY;
+  } else if(event.button===0){ // мышка
+    isDragging=true; 
+    previousMousePosition.x=event.clientX; 
+    previousMousePosition.y=event.clientY;
+  } else if(event.button===2){
+    if(drones.length>0){
+      let target=drones[Math.floor(Math.random()*drones.length)];
+      launchRocket(target);
+    }
+  }
 }
-function onPointerMove(event){if(!isDragging) return; const clientX=event.clientX??event.touches[0].clientX; const clientY=event.clientY??event.touches[0].clientY; rotateScene((clientX-previousMousePosition.x)*0.01,(clientY-previousMousePosition.y)*0.01); previousMousePosition.x=clientX; previousMousePosition.y=clientY;}
-function onPointerUp(){isDragging=false;}
-document.addEventListener("mousedown",onPointerDown);
-document.addEventListener("mousemove",onPointerMove);
-document.addEventListener("mouseup",onPointerUp);
+
+function onPointerMove(event){
+  if(!isDragging) return; 
+  const clientX=event.clientX; 
+  const clientY=event.clientY;
+  rotateScene((clientX-previousMousePosition.x)*0.01,(clientY-previousMousePosition.y)*0.01); 
+  previousMousePosition.x=clientX; 
+  previousMousePosition.y=clientY;
+}
+
+function onPointerUp(event){
+  if(isDragging){
+    isDragging=false;
+    if(event.pointerType==='touch'){
+      // одиночный тап
+      if(Math.abs(event.clientX-previousMousePosition.x)<5 && Math.abs(event.clientY-previousMousePosition.y)<5){
+        if(drones.length>0){
+          let target=drones[Math.floor(Math.random()*drones.length)];
+          launchRocket(target);
+        }
+      }
+    }
+  }
+}
+
+document.addEventListener("pointerdown",onPointerDown);
+document.addEventListener("pointermove",onPointerMove);
+document.addEventListener("pointerup",onPointerUp);
 document.addEventListener("contextmenu",(e)=>e.preventDefault());
 
 // Animate

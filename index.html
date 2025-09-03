@@ -32,16 +32,15 @@ const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(64, window.innerWidth/window.innerHeight, 0.1, 1000);
 let camPolar = Math.PI/4;
 let camAzim = 0;
-const camRadius = 40; // Increased camera radius to match larger grid
-camera.position.set(0,12,32); // Adjusted initial camera position for larger grid
+const camRadius = 20;
+camera.position.set(0,6,16);
 camera.lookAt(0,0,0);
 
 const renderer = new THREE.WebGLRenderer({canvas: document.getElementById("canvas")});
 renderer.setSize(window.innerWidth, window.innerHeight);
 
 // === Grid ===
-// Changed grid size from 20x20 to 40x40
-const gridHelper = new THREE.GridHelper(40, 40, 0xffffff, 0x444444);
+const gridHelper = new THREE.GridHelper(20, 20, 0xffffff, 0x444444);
 scene.add(gridHelper);
 
 // === Roads ===
@@ -56,13 +55,14 @@ function createRoad(x, z, w, h){
   roads.push({mesh:road, w, h, x, z});
 }
 
-// Scaled roads to match larger grid
-createRoad(0, 0, 40, 3); // Main roads doubled in size
-createRoad(0, 0, 3, 40);
-createRoad(0, 10, 40, 2); // Additional roads scaled and repositioned
-createRoad(0, -10, 40, 2);
-createRoad(10, 0, 2, 40);
-createRoad(-10, 0, 2, 40);
+// Основные дороги
+createRoad(0, 0, 20, 1.5);
+createRoad(0, 0, 1.5, 20);
+// Дополнительные дороги
+createRoad(0, 5, 20, 1);
+createRoad(0, -5, 20, 1);
+createRoad(5, 0, 1, 20);
+createRoad(-5, 0, 1, 20);
 
 // === Radar Gradient ===
 const radarSize = 512;
@@ -93,8 +93,7 @@ const radarTexture = new THREE.CanvasTexture(radarCanvas);
 radarTexture.rotation = 0;
 radarTexture.center.set(0.5,0.5);
 
-// Increased radar geometry size to match grid
-const radarGeometry = new THREE.CircleGeometry(20,64);
+const radarGeometry = new THREE.CircleGeometry(10,64);
 const radarMaterial = new THREE.MeshBasicMaterial({map: radarTexture, transparent:true, opacity:0.25, side:THREE.DoubleSide});
 const radar = new THREE.Mesh(radarGeometry,radarMaterial);
 radar.rotation.x = -Math.PI/2;
@@ -120,8 +119,8 @@ function spawnHouses(count=24){
     const w = Math.random()*0.8+0.5;
     const h = Math.random()*2+0.5;
     const d = Math.random()*0.8+0.5;
-    const x = (Math.random()-0.5)*32; // Scaled house spawning area to ±16
-    const z = (Math.random()-0.5)*32;
+    const x = (Math.random()-0.5)*16;
+    const z = (Math.random()-0.5)*16;
 
     let onRoad = false;
     for(const road of roads){
@@ -161,8 +160,8 @@ function createDrone(type="white"){
     }
   }
   
-  const startX = (Math.random()-0.5)*40; // Scaled drone spawn area to ±20
-  const startZ = (Math.random()-0.5)*40;
+  const startX = (Math.random()-0.5)*20;
+  const startZ = (Math.random()-0.5)*20;
   const startY = 6 + Math.random()*8;
   drone.position.set(startX,startY,startZ);
   
@@ -170,8 +169,8 @@ function createDrone(type="white"){
   if(targetHouse){
     dir = new THREE.Vector3().subVectors(targetHouse.position,drone.position).normalize();
   } else {
-    const destX = (Math.random()-0.5)*40; // Scaled destination area
-    const destZ = (Math.random()-0.5)*40;
+    const destX = (Math.random()-0.5)*20;
+    const destZ = (Math.random()-0.5)*20;
     const destY = 6 + Math.random()*4;
     const destination = new THREE.Vector3(destX,destY,destZ);
     dir = new THREE.Vector3().subVectors(destination,drone.position).normalize();
@@ -179,6 +178,7 @@ function createDrone(type="white"){
 
   const speed = type==="red" ? 0.015 + Math.random()*0.03 : 0.005 + Math.random()*0.01;
 
+  // Create dashed line for future trajectory
   const trajectoryColor = type==="red" ? 0xff0000 : 0xffffff;
   const futureTrajectoryGeometry = new THREE.BufferGeometry();
   const futureTrajectoryMaterial = new THREE.LineDashedMaterial({
@@ -207,17 +207,17 @@ function createDrone(type="white"){
   drones.push(drone);
 }
 
-// Reduced initial drones: 5 white, 3 red
-for(let i=0;i<5;i++){createDrone("white");}
-for(let i=0;i<3;i++){createDrone("red");}
+// создаем изначально 10 белых и 5 красных дронов
+for(let i=0;i<10;i++){createDrone("white");}
+for(let i=0;i<5;i++){createDrone("red");}
 
 // === Missiles ===
 const missiles = [];
 let lastMissileTime = Date.now();
 function createMissile() {
   const missile = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.5, 12), new THREE.MeshBasicMaterial({color: 0xff0000}));
-  const x = (Math.random() - 0.5) * 32; // Scaled missile spawn area to ±16
-  const z = (Math.random() - 0.5) * 32;
+  const x = (Math.random() - 0.5) * 16;
+  const z = (Math.random() - 0.5) * 16;
   const startY = 20;
   missile.position.set(x, startY, z);
   missile.userData = {speed: 0.4, trail: []};
@@ -234,7 +234,7 @@ function launchRocket(target){
   rocket.userData = {
     target,
     trail: [],
-    phase: 0,
+    phase: 0, // 0: slow, 1: fast, 2: slow before hit
     distanceTraveled: 0,
     initialDistance: rocket.position.distanceTo(target.position)
   };
@@ -407,8 +407,8 @@ function animate(){
   requestAnimationFrame(animate);
   animateRadar();
 
-  // Spawn missile every 16 seconds
-  if(Date.now() - lastMissileTime > 16000){
+  // Spawn missile every 10 seconds
+  if(Date.now() - lastMissileTime > 10000){
     createMissile();
     lastMissileTime = Date.now();
   }
@@ -423,9 +423,10 @@ function animate(){
     let currentPos = drone.position.clone();
     const futureSteps = 50;
     const stepDistance = data.speed * 20;
-    const gridBoundary = 40; // Updated boundary to ±20 for larger grid
+    const gridBoundary = 20; // Grid is 20x20, so boundary is ±10
     for(let j=0; j<futureSteps; j++){
       let nextPos = currentPos.clone().add(data.direction.clone().multiplyScalar(stepDistance));
+      // Clamp to grid boundaries
       if(Math.abs(nextPos.x) > gridBoundary || Math.abs(nextPos.z) > gridBoundary || nextPos.y < 0) break;
       futurePoints.push(nextPos);
       currentPos = nextPos;
@@ -464,7 +465,7 @@ function animate(){
       }
     } else {
       drone.position.add(data.direction.clone().multiplyScalar(data.speed));
-      if(drone.position.y <= 0 || Math.abs(drone.position.x)>32 || Math.abs(drone.position.z)>32){ // Updated boundary check to ±16
+      if(drone.position.y <= 0 || Math.abs(drone.position.x)>16 || Math.abs(drone.position.z)>16){
         createExplosion(new THREE.Vector3(drone.position.x, Math.max(drone.position.y,0), drone.position.z));
         scene.remove(drone); drones.splice(i,1);
         scene.remove(data.futureTrajectoryLine);
@@ -497,7 +498,7 @@ function animate(){
     }
   }
 
-  // Update trails
+  // Обновление следов
   for(let i=droneTrails.length-1;i>=0;i--){
     const t = droneTrails[i];
     t.mesh.material.opacity -= 0.03;
@@ -507,33 +508,38 @@ function animate(){
     }
   }
 
-  // Maintain balanced drones: 5 white, 3 red
+  // Поддерживаем белых и красных дронов сбалансированно
   let whiteCount = drones.filter(d=>d.userData.type==="white").length;
   let redCount = drones.filter(d=>d.userData.type==="red").length;
-  if(whiteCount<5) createDrone("white");
-  if(redCount<3) createDrone("red");
+  if(whiteCount<10) createDrone("white");
+  if(redCount<5) createDrone("red");
   
   // Rockets
   for(let i=rockets.length-1;i>=0;i--){
     const rocket=rockets[i];
     if(!rocket.userData.target){scene.remove(rocket); rockets.splice(i,1); continue;}
     
+    // Three-stage speed
     const distanceToTarget = rocket.position.distanceTo(rocket.userData.target.position);
-    rocket.userData.distanceTraveled += 0.3;
+    rocket.userData.distanceTraveled += 0.3; // Base increment for phase calculation
     const progress = rocket.userData.distanceTraveled / rocket.userData.initialDistance;
     
     let speed;
     if(progress < 1.0) {
+      // Stage 1: Slow
       speed = 0.1;
     } else if(progress < 0.1) {
+      // Stage 2: Fast
       speed = 1.0;
     } else {
+      // Stage 3: Slow before hit
       speed = 0.20;
     }
 
     const dir = rocket.userData.target.position.clone().sub(rocket.position).normalize();
     rocket.position.add(dir.multiplyScalar(speed));
     
+    // Add trail for rocket
     addTrail(rocket, false, true);
 
     if(distanceToTarget < 0.1){

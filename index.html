@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PVO Simulation with Roads and Cars</title>
+<title>PVO Simulation with Roads, Cars, and Drone Effects</title>
 <style>
   body { margin: 0; overflow: hidden; background: black; }
   canvas { display: block; }
@@ -56,9 +56,8 @@ function createRoad(x, z, w, h){
 }
 
 // Основные дороги
-createRoad(0, 0, 20, 1.5);  // горизонтальная
-createRoad(0, 0, 1.5, 20);  // вертикальная
-
+createRoad(0, 0, 20, 1.5);
+createRoad(0, 0, 1.5, 20);
 // Дополнительные дороги
 createRoad(0, 5, 20, 1);
 createRoad(0, -5, 20, 1);
@@ -74,11 +73,18 @@ const radarCtx = radarCanvas.getContext('2d');
 
 function drawRadarGradient(){
   radarCtx.clearRect(0,0,radarSize,radarSize);
-  const grad = radarCtx.createConicGradient(Math.PI, radarSize/2, radarSize/2);
-  grad.addColorStop(0, 'rgba(0,0,0,0)');
-  grad.addColorStop(0.4, 'rgba(9,20,0,0.05)');
-  grad.addColorStop(1, '#70FF00');
-  radarCtx.fillStyle = grad;
+  if(radarCtx.createConicGradient){
+    const grad = radarCtx.createConicGradient(Math.PI, radarSize/2, radarSize/2);
+    grad.addColorStop(0, 'rgba(0,0,0,0)');
+    grad.addColorStop(0.4, 'rgba(9,20,0,0.05)');
+    grad.addColorStop(1, '#70FF00');
+    radarCtx.fillStyle = grad;
+  } else {
+    const grad = radarCtx.createRadialGradient(radarSize/2, radarSize/2, 0, radarSize/2, radarSize/2, radarSize/2);
+    grad.addColorStop(0, 'rgba(0,255,0,0.4)');
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    radarCtx.fillStyle = grad;
+  }
   radarCtx.fillRect(0,0,radarSize,radarSize);
 }
 drawRadarGradient();
@@ -107,14 +113,28 @@ scene.add(pvo);
 let houses = [];
 function spawnHouses(count=24){
   houses = [];
-  for(let i=0;i<count;i++){
+  let attempts = 0;
+  while(houses.length < count && attempts < count*10){
+    attempts++;
     const w = Math.random()*0.8+0.5;
     const h = Math.random()*2+0.5;
     const d = Math.random()*0.8+0.5;
+    const x = (Math.random()-0.5)*16;
+    const z = (Math.random()-0.5)*16;
+
+    let onRoad = false;
+    for(const road of roads){
+      if(Math.abs(x-road.x)<road.w/2 + w/2 && Math.abs(z-road.z)<road.h/2 + d/2){
+        onRoad = true;
+        break;
+      }
+    }
+    if(onRoad) continue;
+
     const houseGeometry = new THREE.BoxGeometry(w,h,d);
     const houseMaterial = new THREE.MeshBasicMaterial({color:0xffffff, transparent:true, opacity:0.5});
     const house = new THREE.Mesh(houseGeometry,houseMaterial);
-    house.position.set((Math.random()-0.5)*16, h/2, (Math.random()-0.5)*16);
+    house.position.set(x,h/2,z);
     scene.add(house);
     houses.push(house);
     house.userData = {isFlashing:false, flashInterval:null};
@@ -124,14 +144,14 @@ spawnHouses();
 
 // === Drones ===
 const drones = [];
-function createDrone(){
-  const droneGeometry = new THREE.SphereGeometry(0.2,12,12);
-  const droneMaterial = new THREE.MeshBasicMaterial({color:0xffffff});
-  const drone = new THREE.Mesh(droneGeometry,droneMaterial);
+const droneTrails = [];
+function createDrone(type="white"){
+  const color = type==="red"?0xff0000:0xffffff;
+  const drone = new THREE.Mesh(new THREE.SphereGeometry(0.2,12,12), new THREE.MeshBasicMaterial({color}));
+  
   let targetHouse = null;
-  if(houses.length>0 && Math.random()<0.6){
+  if(type==="red" && houses.length>0){
     targetHouse = houses[Math.floor(Math.random()*houses.length)];
-    drone.material.color.set(0xff0000);
     if(targetHouse.userData.flashInterval===null){
       targetHouse.userData.isFlashing = true;
       targetHouse.userData.flashInterval = setInterval(()=>{
@@ -139,37 +159,39 @@ function createDrone(){
       },200);
     }
   }
-  const startX = (Math.random()<0.5?-1:1)*(10 + Math.random()*5);
-  const startZ = (Math.random()<0.5?-1:1)*(10 + Math.random()*5);
+  
+  const startX = (Math.random()-0.5)*20;
+  const startZ = (Math.random()-0.5)*20;
   const startY = 6 + Math.random()*8;
   drone.position.set(startX,startY,startZ);
+  
   let dir;
   if(targetHouse){
     dir = new THREE.Vector3().subVectors(targetHouse.position,drone.position).normalize();
   } else {
-    const destX = (Math.random()<0.5?-1:1)*15;
-    const destZ = (Math.random()<0.5?-1:1)*15;
-    const destY = 6 + Math.random()*8;
+    const destX = (Math.random()-0.5)*20;
+    const destZ = (Math.random()-0.5)*20;
+    const destY = 6 + Math.random()*4;
     const destination = new THREE.Vector3(destX,destY,destZ);
     dir = new THREE.Vector3().subVectors(destination,drone.position).normalize();
   }
-  drone.userData = {
-    target: targetHouse,
-    direction: dir,
-    speed: 0.015 + Math.random()*0.03,
-    hasAttacked:false
-  };
+
+  const speed = type==="red" ? 0.015 + Math.random()*0.03 : 0.005 + Math.random()*0.01;
+
+  drone.userData = {target: targetHouse, direction: dir, speed, hasAttacked:false, type, trail:[], diving:false};
   scene.add(drone);
   drones.push(drone);
 }
-for(let i=0;i<10;i++){createDrone();}
+
+// создаем изначально 10 белых и 5 красных дронов
+for(let i=0;i<10;i++){createDrone("white");}
+for(let i=0;i<5;i++){createDrone("red");}
 
 // === Rockets ===
 const rockets = [];
 function launchRocket(target){
-  const rocketGeometry = new THREE.SphereGeometry(0.1,8,8);
-  const rocketMaterial = new THREE.MeshBasicMaterial({color:0xffff00});
-  const rocket = new THREE.Mesh(rocketGeometry,rocketMaterial);
+  if(!target) return;
+  const rocket = new THREE.Mesh(new THREE.SphereGeometry(0.1,8,8), new THREE.MeshBasicMaterial({color:0xffff00}));
   rocket.position.copy(pvo.position);
   rocket.userData = {target};
   scene.add(rocket);
@@ -178,15 +200,13 @@ function launchRocket(target){
 
 // === Explosion ===
 function createExplosion(position){
-  const explosionGeometry = new THREE.SphereGeometry(0.1,16,16);
-  const explosionMaterial = new THREE.MeshBasicMaterial({color:0xffaa00, transparent:true, opacity:0.9});
-  const explosion = new THREE.Mesh(explosionGeometry, explosionMaterial);
+  const explosion = new THREE.Mesh(new THREE.SphereGeometry(0.1,16,16), new THREE.MeshBasicMaterial({color:0xffaa00, transparent:true, opacity:0.9}));
   explosion.position.copy(position);
   scene.add(explosion);
   
   let scale = 0.1;
   const interval = setInterval(()=>{
-    scale += 0.25;
+    scale += 0.4; // увеличенный взрыв
     explosion.scale.setScalar(scale);
     explosion.material.opacity -= 0.05;
     if(explosion.material.opacity <=0){
@@ -194,6 +214,26 @@ function createExplosion(position){
       clearInterval(interval);
     }
   },50);
+}
+
+// === House Marker ===
+function createHouseMarker(house){
+  const geometry = new THREE.EdgesGeometry(house.geometry);
+  const material = new THREE.LineBasicMaterial({color:0xffa500, linewidth:2}); // оранжевые линии
+  const line = new THREE.LineSegments(geometry, material);
+  line.position.copy(house.position);
+  scene.add(line);
+}
+
+// === Drone Trail ===
+function addDroneTrail(drone){
+  const trailGeo = new THREE.SphereGeometry(0.05,6,6);
+  const trailMat = new THREE.MeshBasicMaterial({color:0xff5500, transparent:true, opacity:0.6});
+  const particle = new THREE.Mesh(trailGeo, trailMat);
+  particle.position.copy(drone.position);
+  scene.add(particle);
+  drone.userData.trail.push({mesh:particle, life:20});
+  droneTrails.push(drone.userData.trail[drone.userData.trail.length-1]);
 }
 
 // === Score ===
@@ -214,13 +254,35 @@ function rotateScene(deltaX,deltaY){
   camera.lookAt(0,0,0);
 }
 function onPointerDown(event){
-  if(event.button===0 || event.touches){
+  if(event.touches && event.touches.length>0){
     isDragging=true; 
-    previousMousePosition.x=event.clientX??event.touches[0].clientX; 
-    previousMousePosition.y=event.clientY??event.touches[0].clientY;
-  } else if(event.button===2){if(drones.length>0){let target=drones[Math.floor(Math.random()*drones.length)]; launchRocket(target);}}
+    previousMousePosition.x=event.touches[0].clientX;
+    previousMousePosition.y=event.touches[0].clientY;
+  } else if(event.button===0){
+    isDragging=true;
+    previousMousePosition.x=event.clientX;
+    previousMousePosition.y=event.clientY;
+  } else if(event.button===2){ 
+    if(drones.length>0){
+      let target=drones[Math.floor(Math.random()*drones.length)];
+      launchRocket(target);
+    }
+  }
 }
-function onPointerMove(event){if(!isDragging) return; const clientX=event.clientX??event.touches[0].clientX; const clientY=event.clientY??event.touches[0].clientY; rotateScene((clientX-previousMousePosition.x)*0.01,(clientY-previousMousePosition.y)*0.01); previousMousePosition.x=clientX; previousMousePosition.y=clientY;}
+function onPointerMove(event){
+  if(!isDragging) return;
+  let clientX, clientY;
+  if(event.touches && event.touches.length>0){
+    clientX=event.touches[0].clientX;
+    clientY=event.touches[0].clientY;
+  } else {
+    clientX=event.clientX;
+    clientY=event.clientY;
+  }
+  rotateScene((clientX-previousMousePosition.x)*0.01,(clientY-previousMousePosition.y)*0.01);
+  previousMousePosition.x=clientX;
+  previousMousePosition.y=clientY;
+}
 function onPointerUp(){isDragging=false;}
 document.addEventListener("mousedown",onPointerDown);
 document.addEventListener("mousemove",onPointerMove);
@@ -237,10 +299,8 @@ function spawnCars(){
     const isHorizontal = road.w > road.h;
     const numCars = 2;
     for(let i=0;i<numCars;i++){
-      const carGeometry = new THREE.BoxGeometry(0.4,0.2,0.4);
-      const carMaterial = new THREE.MeshBasicMaterial({color:0x0000ff, transparent:true, opacity:0.6});
-      const car = new THREE.Mesh(carGeometry,carMaterial);
-      const speed = 0.01 + Math.random()*0.02; // случайная низкая скорость
+      const car = new THREE.Mesh(new THREE.BoxGeometry(0.4,0.2,0.4), new THREE.MeshBasicMaterial({color:0xffffff, transparent:true, opacity:0.5}));
+      const speed = 0.01 + Math.random()*0.02;
       if(isHorizontal){
         const startX = -road.w/2 + Math.random()*road.w;
         car.position.set(startX,0.1,road.z);
@@ -266,15 +326,23 @@ function animate(){
   for(let i=drones.length-1;i>=0;i--){
     const drone=drones[i];
     const data=drone.userData;
+
+    if(data.type==="red" && data.target){
+      // отслеживаем момент захода на дом
+      const distXZ = Math.sqrt((drone.position.x - data.target.position.x)**2 + (drone.position.z - data.target.position.z)**2);
+      if(distXZ < 5) data.diving = true;
+      if(data.diving) addDroneTrail(drone); // рисуем след
+    }
     
     if(data.target && houses.includes(data.target)){
       const targetPos = data.target.position.clone();
-      if(drone.position.distanceTo(targetPos)<5 && !data.hasAttacked){data.hasAttacked=true; data.speed*=1.5; targetPos.y=0;}
+      if(drone.position.distanceTo(targetPos)<5 && !data.hasAttacked){data.hasAttacked=true; data.speed*=3.5; targetPos.y=0;}
       const dir = targetPos.clone().sub(drone.position).normalize();
       drone.position.add(dir.multiplyScalar(data.speed));
       
-      if(drone.position.distanceTo(targetPos)<0.3){
+      if(drone.position.distanceTo(targetPos)<0.1){
         createExplosion(drone.position);
+        createHouseMarker(data.target); // оранжевые линии
         scene.remove(drone); drones.splice(i,1);
         scene.remove(data.target); houses.splice(houses.indexOf(data.target),1);
         if(data.target.userData.flashInterval){clearInterval(data.target.userData.flashInterval);}
@@ -282,42 +350,58 @@ function animate(){
       }
     } else {
       drone.position.add(data.direction.clone().multiplyScalar(data.speed));
-      if(drone.position.y <= 0 || Math.abs(drone.position.x)>30 || Math.abs(drone.position.z)>30){
+      if(drone.position.y <= 0 || Math.abs(drone.position.x)>16 || Math.abs(drone.position.z)>16){
         createExplosion(new THREE.Vector3(drone.position.x, Math.max(drone.position.y,0), drone.position.z));
         scene.remove(drone); drones.splice(i,1);
       }
     }
   }
+
+  // Обновление следов дронов
+  for(let i=droneTrails.length-1;i>=0;i--){
+    const t = droneTrails[i];
+    t.mesh.material.opacity -= 0.03;
+    if(t.mesh.material.opacity <=0){
+      scene.remove(t.mesh);
+      droneTrails.splice(i,1);
+    }
+  }
+
+  // Поддерживаем белых и красных дронов сбалансированно
+  let whiteCount = drones.filter(d=>d.userData.type==="white").length;
+  let redCount = drones.filter(d=>d.userData.type==="red").length;
+  if(whiteCount<10) createDrone("white");
+  if(redCount<5) createDrone("red");
   
   // Rockets
   for(let i=rockets.length-1;i>=0;i--){
     const rocket=rockets[i];
-    if(!rocket.userData.target) continue;
+    if(!rocket.userData.target){scene.remove(rocket); rockets.splice(i,1); continue;}
     const dir=rocket.userData.target.position.clone().sub(rocket.position).normalize();
-    rocket.position.add(dir.multiplyScalar(0.4));
-    if(rocket.position.distanceTo(rocket.userData.target.position)<0.3){
+    rocket.position.add(dir.multiplyScalar(0.3));
+    if(rocket.position.distanceTo(rocket.userData.target.position)<0.2){
       createExplosion(rocket.position);
       scene.remove(rocket);
       rockets.splice(i,1);
       const target=rocket.userData.target;
       if(drones.includes(target)){scene.remove(target); drones.splice(drones.indexOf(target),1); score=Math.min(score+1,999); updateScore();}
     }
-    if(Math.abs(rocket.position.x)>30||Math.abs(rocket.position.z)>30){scene.remove(rocket); rockets.splice(i,1);}
+    if(Math.abs(rocket.position.x)>999||Math.abs(rocket.position.z)>999){scene.remove(rocket); rockets.splice(i,1);}
   }
-  
-  while(drones.length<10){createDrone();}
 
-  // Cars movement
+  // Cars movement (loop)
   cars.forEach(car=>{
     if(car.userData.isHorizontal){
       car.position.x += car.userData.speed;
-      if(car.position.x > car.userData.road.x + car.userData.road.w/2) car.position.x = car.userData.road.x - car.userData.road.w/2;
+      const roadHalf = car.userData.road.w/1;
+      if(car.position.x > car.userData.road.x + roadHalf) car.position.x = car.userData.road.x - roadHalf;
     } else {
       car.position.z += car.userData.speed;
-      if(car.position.z > car.userData.road.z + car.userData.road.h/2) car.position.z = car.userData.road.z - car.userData.road.h/2;
+      const roadHalf = car.userData.road.h/2;
+      if(car.position.z > car.userData.road.z + roadHalf) car.position.z = car.userData.road.z - roadHalf;
     }
   });
-  
+
   renderer.render(scene,camera);
 }
 animate();

@@ -187,6 +187,20 @@ function createDrone(type="white"){
 for(let i=0;i<10;i++){createDrone("white");}
 for(let i=0;i<5;i++){createDrone("red");}
 
+// === Missiles ===
+const missiles = [];
+let lastMissileTime = Date.now();
+function createMissile() {
+  const missile = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.5, 12), new THREE.MeshBasicMaterial({color: 0xff0000}));
+  const x = (Math.random() - 0.5) * 16;
+  const z = (Math.random() - 0.5) * 16;
+  const startY = 20;
+  missile.position.set(x, startY, z);
+  missile.userData = {speed: 0.4, trail: []};
+  scene.add(missile);
+  missiles.push(missile);
+}
+
 // === Rockets ===
 const rockets = [];
 function launchRocket(target){
@@ -199,14 +213,14 @@ function launchRocket(target){
 }
 
 // === Explosion ===
-function createExplosion(position){
+function createExplosion(position, scaleFactor=1){
   const explosion = new THREE.Mesh(new THREE.SphereGeometry(0.1,16,16), new THREE.MeshBasicMaterial({color:0xffaa00, transparent:true, opacity:0.9}));
   explosion.position.copy(position);
   scene.add(explosion);
   
-  let scale = 0.1;
+  let scale = 0.1 * scaleFactor;
   const interval = setInterval(()=>{
-    scale += 0.4; // увеличенный взрыв
+    scale += 0.4 * scaleFactor;
     explosion.scale.setScalar(scale);
     explosion.material.opacity -= 0.05;
     if(explosion.material.opacity <=0){
@@ -217,23 +231,32 @@ function createExplosion(position){
 }
 
 // === House Marker ===
-function createHouseMarker(house){
+function createHouseMarker(house, isMissileHit = false){
   const geometry = new THREE.EdgesGeometry(house.geometry);
-  const material = new THREE.LineBasicMaterial({color:0xffa500, linewidth:2}); // оранжевые линии
+  const material = new THREE.LineDashedMaterial({
+    color: 0xffa500, // оранжевые линии
+    linewidth: 2,
+    scale: 1,
+    dashSize: isMissileHit ? 0.2 : 0, // пунктир для ракет
+    gapSize: isMissileHit ? 0.2 : 0
+  });
   const line = new THREE.LineSegments(geometry, material);
+  if (isMissileHit) {
+    line.computeLineDistances(); // необходим для пунктирных линий
+  }
   line.position.copy(house.position);
   scene.add(line);
 }
 
 // === Drone Trail ===
-function addDroneTrail(drone){
+function addDroneTrail(object){
   const trailGeo = new THREE.SphereGeometry(0.05,6,6);
   const trailMat = new THREE.MeshBasicMaterial({color:0xff5500, transparent:true, opacity:0.6});
   const particle = new THREE.Mesh(trailGeo, trailMat);
-  particle.position.copy(drone.position);
+  particle.position.copy(object.position);
   scene.add(particle);
-  drone.userData.trail.push({mesh:particle, life:20});
-  droneTrails.push(drone.userData.trail[drone.userData.trail.length-1]);
+  object.userData.trail.push({mesh:particle, life:20});
+  droneTrails.push(object.userData.trail[object.userData.trail.length-1]);
 }
 
 // === Score ===
@@ -242,6 +265,9 @@ function updateScore(){document.getElementById("score").innerText = `SCORE: ${St
 
 // === Controls ===
 let isDragging = false;
+let isPotentialDrag = false;
+let startX = 0;
+let startY = 0;
 let previousMousePosition = {x:0,y:0};
 function rotateScene(deltaX,deltaY){
   camAzim -= deltaX; 
@@ -254,36 +280,58 @@ function rotateScene(deltaX,deltaY){
   camera.lookAt(0,0,0);
 }
 function onPointerDown(event){
-  if(event.touches && event.touches.length>0){
-    isDragging=true; 
-    previousMousePosition.x=event.touches[0].clientX;
-    previousMousePosition.y=event.touches[0].clientY;
-  } else if(event.button===0){
-    isDragging=true;
-    previousMousePosition.x=event.clientX;
-    previousMousePosition.y=event.clientY;
-  } else if(event.button===2){ 
-    if(drones.length>0){
-      let target=drones[Math.floor(Math.random()*drones.length)];
-      launchRocket(target);
+  if(event.touches && event.touches.length === 1){
+    isPotentialDrag = true;
+    startX = event.touches[0].clientX;
+    startY = event.touches[0].clientY;
+    previousMousePosition.x = startX;
+    previousMousePosition.y = startY;
+  } else {
+    if(event.button === 0){
+      isDragging = true;
+      previousMousePosition.x = event.clientX;
+      previousMousePosition.y = event.clientY;
+    } else if(event.button === 2){ 
+      const threats = [...drones, ...missiles];
+      if(threats.length > 0){
+        let target = threats[Math.floor(Math.random() * threats.length)];
+        launchRocket(target);
+      }
     }
   }
 }
 function onPointerMove(event){
-  if(!isDragging) return;
   let clientX, clientY;
-  if(event.touches && event.touches.length>0){
-    clientX=event.touches[0].clientX;
-    clientY=event.touches[0].clientY;
+  if(event.touches && event.touches.length === 1){
+    clientX = event.touches[0].clientX;
+    clientY = event.touches[0].clientY;
   } else {
-    clientX=event.clientX;
-    clientY=event.clientY;
+    clientX = event.clientX;
+    clientY = event.clientY;
   }
-  rotateScene((clientX-previousMousePosition.x)*0.01,(clientY-previousMousePosition.y)*0.01);
-  previousMousePosition.x=clientX;
-  previousMousePosition.y=clientY;
+  const deltaX = Math.abs(clientX - startX);
+  const deltaY = Math.abs(clientY - startY);
+  if(isPotentialDrag && (deltaX > 10 || deltaY > 10)){
+    isDragging = true;
+    isPotentialDrag = false;
+  }
+  if(isDragging){
+    rotateScene((clientX - previousMousePosition.x) * 0.01, (clientY - previousMousePosition.y) * 0.01);
+    previousMousePosition.x = clientX;
+    previousMousePosition.y = clientY;
+  }
 }
-function onPointerUp(){isDragging=false;}
+function onPointerUp(event){
+  if(isPotentialDrag){
+    const threats = [...drones, ...missiles];
+    if(threats.length > 0){
+      let target = threats[Math.floor(Math.random() * threats.length)];
+      launchRocket(target);
+    }
+  }
+  isPotentialDrag = false;
+  isDragging = false;
+}
 document.addEventListener("mousedown",onPointerDown);
 document.addEventListener("mousemove",onPointerMove);
 document.addEventListener("mouseup",onPointerUp);
@@ -322,6 +370,12 @@ function animate(){
   requestAnimationFrame(animate);
   animateRadar();
 
+  // Spawn missile every 10 seconds
+  if(Date.now() - lastMissileTime > 10000){
+    createMissile();
+    lastMissileTime = Date.now();
+  }
+
   // Drones
   for(let i=drones.length-1;i>=0;i--){
     const drone=drones[i];
@@ -342,7 +396,7 @@ function animate(){
       
       if(drone.position.distanceTo(targetPos)<0.1){
         createExplosion(drone.position);
-        createHouseMarker(data.target); // оранжевые линии
+        createHouseMarker(data.target, false); // сплошные линии для дронов
         scene.remove(drone); drones.splice(i,1);
         scene.remove(data.target); houses.splice(houses.indexOf(data.target),1);
         if(data.target.userData.flashInterval){clearInterval(data.target.userData.flashInterval);}
@@ -353,6 +407,32 @@ function animate(){
       if(drone.position.y <= 0 || Math.abs(drone.position.x)>16 || Math.abs(drone.position.z)>16){
         createExplosion(new THREE.Vector3(drone.position.x, Math.max(drone.position.y,0), drone.position.z));
         scene.remove(drone); drones.splice(i,1);
+      }
+    }
+  }
+
+  // Missiles
+  for(let i = missiles.length - 1; i >= 0; i--){
+    const missile = missiles[i];
+    missile.position.y -= missile.userData.speed;
+    addDroneTrail(missile);
+    if(missile.position.y <= 0){
+      createExplosion(missile.position, 10);
+      scene.remove(missile);
+      missiles.splice(i, 1);
+      // Destroy nearby houses within blast radius
+      const blastRadius = 3; // уменьшенный радиус для большей точности
+      for(let j = houses.length - 1; j >= 0; j--){
+        const house = houses[j];
+        const dist = Math.sqrt((house.position.x - missile.position.x)**2 + (house.position.z - missile.position.z)**2);
+        if(dist < blastRadius){
+          createExplosion(house.position);
+          createHouseMarker(house, true); // пунктирные линии для ракет
+          scene.remove(house);
+          houses.splice(j, 1);
+          if(house.userData.flashInterval){clearInterval(house.userData.flashInterval);}
+          score = Math.min(score + 1, 999); updateScore();
+        }
       }
     }
   }
@@ -384,7 +464,11 @@ function animate(){
       scene.remove(rocket);
       rockets.splice(i,1);
       const target=rocket.userData.target;
-      if(drones.includes(target)){scene.remove(target); drones.splice(drones.indexOf(target),1); score=Math.min(score+1,999); updateScore();}
+      if(drones.includes(target)){
+        scene.remove(target); drones.splice(drones.indexOf(target),1); score=Math.min(score+1,999); updateScore();
+      } else if(missiles.includes(target)){
+        scene.remove(target); missiles.splice(missiles.indexOf(target),1); score=Math.min(score+1,999); updateScore();
+      }
     }
     if(Math.abs(rocket.position.x)>999||Math.abs(rocket.position.z)>999){scene.remove(rocket); rockets.splice(i,1);}
   }

@@ -231,7 +231,13 @@ function launchRocket(target){
   if(!target) return;
   const rocket = new THREE.Mesh(new THREE.SphereGeometry(0.1,8,8), new THREE.MeshBasicMaterial({color:0xffff00}));
   rocket.position.copy(pvo.position);
-  rocket.userData = {target};
+  rocket.userData = {
+    target,
+    trail: [],
+    phase: 0, // 0: slow, 1: fast, 2: slow before hit
+    distanceTraveled: 0,
+    initialDistance: rocket.position.distanceTo(target.position)
+  };
   scene.add(rocket);
   rockets.push(rocket);
 }
@@ -274,15 +280,19 @@ function createHouseMarker(house, isMissileHit = false){
   scene.add(line);
 }
 
-// === Drone Trail ===
-function addDroneTrail(object, isMissile=false){
-  const trailGeo = new THREE.SphereGeometry(0.05,6,6);
-  const trailColor = isMissile ? 0xffff00 : 0xff5500;
-  const trailMat = new THREE.MeshBasicMaterial({color:trailColor, transparent:true, opacity:0.6});
+// === Drone and Rocket Trail ===
+function addTrail(object, isMissile=false, isRocket=false){
+  const trailGeo = new THREE.SphereGeometry(isRocket ? 0.08 : 0.05, 6, 6);
+  const trailColor = isRocket ? 0xffff00 : (isMissile ? 0xffff00 : 0xff5500);
+  const trailMat = new THREE.MeshBasicMaterial({
+    color: trailColor,
+    transparent: true,
+    opacity: isRocket ? 0.4 : 0.6
+  });
   const particle = new THREE.Mesh(trailGeo, trailMat);
   particle.position.copy(object.position);
   scene.add(particle);
-  object.userData.trail.push({mesh:particle, life:20});
+  object.userData.trail.push({mesh: particle, life: isRocket ? 60 : 20});
   droneTrails.push(object.userData.trail[object.userData.trail.length-1]);
 }
 
@@ -412,8 +422,8 @@ function animate(){
     const futurePoints = [];
     let currentPos = drone.position.clone();
     const futureSteps = 50;
-    const stepDistance = data.speed * 10;
-    const gridBoundary = 10; // Grid is 20x20, so boundary is ±10
+    const stepDistance = data.speed * 20;
+    const gridBoundary = 20; // Grid is 20x20, so boundary is ±10
     for(let j=0; j<futureSteps; j++){
       let nextPos = currentPos.clone().add(data.direction.clone().multiplyScalar(stepDistance));
       // Clamp to grid boundaries
@@ -433,9 +443,9 @@ function animate(){
     if(data.type==="red" && data.target){
       const distXZ = Math.sqrt((drone.position.x - data.target.position.x)**2 + (drone.position.z - data.target.position.z)**2);
       if(distXZ < 5) data.diving = true;
-      if(data.diving) addDroneTrail(drone);
+      if(data.diving) addTrail(drone);
     } else {
-      addDroneTrail(drone);
+      addTrail(drone);
     }
     
     if(data.target && houses.includes(data.target)){
@@ -467,7 +477,7 @@ function animate(){
   for(let i = missiles.length - 1; i >= 0; i--){
     const missile = missiles[i];
     missile.position.y -= missile.userData.speed;
-    addDroneTrail(missile, true);
+    addTrail(missile, true);
     if(missile.position.y <= 0){
       createExplosion(missile.position, 10, true);
       scene.remove(missile);
@@ -488,7 +498,7 @@ function animate(){
     }
   }
 
-  // Обновление следов дронов
+  // Обновление следов
   for(let i=droneTrails.length-1;i>=0;i--){
     const t = droneTrails[i];
     t.mesh.material.opacity -= 0.03;
@@ -508,9 +518,31 @@ function animate(){
   for(let i=rockets.length-1;i>=0;i--){
     const rocket=rockets[i];
     if(!rocket.userData.target){scene.remove(rocket); rockets.splice(i,1); continue;}
-    const dir=rocket.userData.target.position.clone().sub(rocket.position).normalize();
-    rocket.position.add(dir.multiplyScalar(0.3));
-    if(rocket.position.distanceTo(rocket.userData.target.position)<0.2){
+    
+    // Three-stage speed
+    const distanceToTarget = rocket.position.distanceTo(rocket.userData.target.position);
+    rocket.userData.distanceTraveled += 0.3; // Base increment for phase calculation
+    const progress = rocket.userData.distanceTraveled / rocket.userData.initialDistance;
+    
+    let speed;
+    if(progress < 1.0) {
+      // Stage 1: Slow
+      speed = 0.1;
+    } else if(progress < 0.1) {
+      // Stage 2: Fast
+      speed = 1.0;
+    } else {
+      // Stage 3: Slow before hit
+      speed = 0.20;
+    }
+
+    const dir = rocket.userData.target.position.clone().sub(rocket.position).normalize();
+    rocket.position.add(dir.multiplyScalar(speed));
+    
+    // Add trail for rocket
+    addTrail(rocket, false, true);
+
+    if(distanceToTarget < 0.1){
       createExplosion(rocket.position);
       scene.remove(rocket);
       rockets.splice(i,1);

@@ -111,7 +111,7 @@ scene.add(pvo);
 
 // === Houses ===
 let houses = [];
-function spawnHouses(count=24){
+function spawnHouses(count=64){
   houses = [];
   let attempts = 0;
   while(houses.length < count && attempts < count*10){
@@ -147,7 +147,7 @@ const drones = [];
 const droneTrails = [];
 function createDrone(type="white"){
   const color = type==="red"?0xff0000:0xffffff;
-  const drone = new THREE.Mesh(new THREE.SphereGeometry(0.2,12,12), new THREE.MeshBasicMaterial({color}));
+  const drone = new THREE.Mesh(new THREE.SphereGeometry(0.1,12,12), new THREE.MeshBasicMaterial({color}));
   
   let targetHouse = null;
   if(type==="red" && houses.length>0){
@@ -207,20 +207,20 @@ function createDrone(type="white"){
   drones.push(drone);
 }
 
-// создаем изначально 10 белых и 5 красных дронов
-for(let i=0;i<10;i++){createDrone("white");}
-for(let i=0;i<5;i++){createDrone("red");}
+// создаем изначально 5 белых и 2 красных дронов
+for(let i=0;i<5;i++){createDrone("white");}
+for(let i=0;i<2;i++){createDrone("red");}
 
 // === Missiles ===
 const missiles = [];
 let lastMissileTime = Date.now();
 function createMissile() {
   const missile = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.5, 12), new THREE.MeshBasicMaterial({color: 0xff0000}));
-  const x = (Math.random() - 0.5) * 16;
-  const z = (Math.random() - 0.5) * 16;
-  const startY = 20;
+  const x = (Math.random() - 0.5) * 20;
+  const z = (Math.random() - 0.5) * 20;
+  const startY = 8;
   missile.position.set(x, startY, z);
-  missile.userData = {speed: 0.4, trail: []};
+  missile.userData = {speed: 0.2, trail: []};
   scene.add(missile);
   missiles.push(missile);
 }
@@ -234,8 +234,6 @@ function launchRocket(target){
   rocket.userData = {
     target,
     trail: [],
-    phase: 0, // 0: slow, 1: fast, 2: slow before hit
-    distanceTraveled: 0,
     initialDistance: rocket.position.distanceTo(target.position)
   };
   scene.add(rocket);
@@ -267,8 +265,8 @@ function createHouseMarker(house, isMissileHit = false){
   const geometry = new THREE.EdgesGeometry(house.geometry);
   const material = new THREE.LineDashedMaterial({
     color: 0xffa500,
-    linewidth: 2,
-    scale: 1,
+    linewidth: 1,
+    scale: 2,
     dashSize: isMissileHit ? 0.2 : 0,
     gapSize: isMissileHit ? 0.2 : 0
   });
@@ -387,13 +385,13 @@ function spawnCars(){
       const car = new THREE.Mesh(new THREE.BoxGeometry(0.4,0.2,0.4), new THREE.MeshBasicMaterial({color:0xffffff, transparent:true, opacity:0.5}));
       const speed = 0.01 + Math.random()*0.02;
       if(isHorizontal){
-        const startX = -road.w/2 + Math.random()*road.w;
+        const startX = road.x - road.w/2 + Math.random()*road.w;
         car.position.set(startX,0.1,road.z);
-        car.userData = {speed, isHorizontal:true, road};
+        car.userData = {speed, baseSpeed: speed, isHorizontal:true, road};
       } else {
-        const startZ = -road.h/2 + Math.random()*road.h;
+        const startZ = road.z - road.h/2 + Math.random()*road.h;
         car.position.set(road.x,0.1,startZ);
-        car.userData = {speed, isHorizontal:false, road};
+        car.userData = {speed, baseSpeed: speed, isHorizontal:false, road};
       }
       scene.add(car);
       cars.push(car);
@@ -402,13 +400,62 @@ function spawnCars(){
 }
 spawnCars();
 
+// === Cars Update (stop&go) ===
+function updateCars(){
+  const safeDistance = 1.0; // дистанция
+  const accel = 0.0005;     // ускорение
+  const brake = 0.001;      // торможение
+
+  cars.forEach(car=>{
+    const data = car.userData;
+    let nearestDist = Infinity;
+
+    // ищем ближайшую машину впереди
+    cars.forEach(other=>{
+      if(other === car) return;
+      const oData = other.userData;
+      if(oData.isHorizontal !== data.isHorizontal) return;
+      if(oData.road !== data.road) return;
+
+      if(data.isHorizontal){
+        if(other.position.x > car.position.x){
+          const dist = other.position.x - car.position.x;
+          if(dist < nearestDist) nearestDist = dist;
+        }
+      } else {
+        if(other.position.z > car.position.z){
+          const dist = other.position.z - car.position.z;
+          if(dist < nearestDist) nearestDist = dist;
+        }
+      }
+    });
+
+    // корректируем скорость
+    if(nearestDist < safeDistance){
+      data.speed = Math.max(0, data.speed - brake);
+    } else if(data.speed < data.baseSpeed){
+      data.speed = Math.min(data.baseSpeed, data.speed + accel);
+    }
+
+    // двигаем машину
+    if(data.isHorizontal){
+      car.position.x += data.speed;
+      if(car.position.x > data.road.x + data.road.w / 2) car.position.x = data.road.x - data.road.w / 2;
+    } else {
+      car.position.z += data.speed;
+      if(car.position.z > data.road.z + data.road.h / 2) car.position.z = data.road.z - data.road.h / 2;
+    }
+  });
+}
+
 // === Animate ===
 function animate(){
   requestAnimationFrame(animate);
+  updateCars(); // теперь обновление машин идёт только через stop&go
   animateRadar();
 
-  // Spawn missile every 10 seconds
-  if(Date.now() - lastMissileTime > 10000){
+  // Spawn missile every 16 seconds
+  if(Date.now() - lastMissileTime > 16000){
     createMissile();
     lastMissileTime = Date.now();
   }
@@ -423,7 +470,7 @@ function animate(){
     let currentPos = drone.position.clone();
     const futureSteps = 50;
     const stepDistance = data.speed * 20;
-    const gridBoundary = 20; // Grid is 20x20, so boundary is ±10
+    const gridBoundary = 10; // Grid is 20x20, so boundary is ±10
     for(let j=0; j<futureSteps; j++){
       let nextPos = currentPos.clone().add(data.direction.clone().multiplyScalar(stepDistance));
       // Clamp to grid boundaries
@@ -521,18 +568,14 @@ function animate(){
     
     // Three-stage speed
     const distanceToTarget = rocket.position.distanceTo(rocket.userData.target.position);
-    rocket.userData.distanceTraveled += 0.3; // Base increment for phase calculation
-    const progress = rocket.userData.distanceTraveled / rocket.userData.initialDistance;
+    const remainingFraction = distanceToTarget / rocket.userData.initialDistance;
     
     let speed;
-    if(progress < 1.0) {
-      // Stage 1: Slow
+    if(remainingFraction > 0.8) {
       speed = 0.1;
-    } else if(progress < 0.1) {
-      // Stage 2: Fast
+    } else if(remainingFraction > 0.2) {
       speed = 1.0;
     } else {
-      // Stage 3: Slow before hit
       speed = 0.20;
     }
 
@@ -558,19 +601,6 @@ function animate(){
     }
     if(Math.abs(rocket.position.x)>999||Math.abs(rocket.position.z)>999){scene.remove(rocket); rockets.splice(i,1);}
   }
-
-  // Cars movement (loop)
-  cars.forEach(car=>{
-    if(car.userData.isHorizontal){
-      car.position.x += car.userData.speed;
-      const roadHalf = car.userData.road.w/1;
-      if(car.position.x > car.userData.road.x + roadHalf) car.position.x = car.userData.road.x - roadHalf;
-    } else {
-      car.position.z += car.userData.speed;
-      const roadHalf = car.userData.road.h/2;
-      if(car.position.z > car.userData.road.z + roadHalf) car.position.z = car.userData.road.z - roadHalf;
-    }
-  });
 
   renderer.render(scene,camera);
 }

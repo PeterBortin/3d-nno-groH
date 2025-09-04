@@ -24,16 +24,60 @@
     position: absolute;
     color: white;
     font-family: monospace;
-    font-size: 12px;
+    font-size: 20px;
     background: rgba(0,0,0,0.7);
     padding: 2px 6px;
-    border-radius: 4px;
+    border-radius: 6px;
     pointer-events: none;
+  }
+  #control-panel {
+    position: absolute;
+    top: 50px;
+    left: 10px;
+    color: white;
+    font-family: monospace;
+    font-size: 14px;
+    background: rgba(0,0,0,0.7);
+    padding: 10px;
+    border-radius: 8px;
+    pointer-events: auto;
+  }
+  #control-panel label {
+    display: block;
+    margin: 5px 0;
+  }
+  #control-panel input[type="number"] {
+    width: 60px;
+    background: #333;
+    color: white;
+    border: 1px solid #555;
+    border-radius: 4px;
+    padding: 2px;
+    font-family: monospace;
+  }
+  #control-panel button {
+    background: #555;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 5px 10px;
+    cursor: pointer;
+    font-family: monospace;
+    margin-top: 10px;
+  }
+  #control-panel button:hover {
+    background: #777;
   }
 </style>
 </head>
 <body>
-<div id="score">SCORE: 000</div>
+<div id="score">Знищено: 000</div>
+<div id="control-panel">
+  <label>Герань -3: <input type="number" id="red-drones" value="2" min="0" max="10"></label>
+  <label>Герань -2: <input type="number" id="white-drones" value="5" min="0" max="20"></label>
+  <label>Балістика: <input type="number" id="missile-interval" value="16" min="2" max="60"></label>
+  <button onclick="applySettings()">Застосувати</button>
+</div>
 <canvas id="canvas"></canvas>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
@@ -186,16 +230,13 @@ function createDrone(type="white"){
     dir = new THREE.Vector3().subVectors(destination,drone.position).normalize();
   }
 
-  // Reduced speed for all drones except red drones when diving
   const baseSpeed = type==="red" ? 0.015 + Math.random()*0.015 : 0.0025 + Math.random()*0.005;
-  const diveSpeed = 0.015 + Math.random()*0.03; // Original speed for red drones when diving
+  const diveSpeed = 0.015 + Math.random()*0.03;
 
-  // Create toolbar for altitude
   const toolbar = document.createElement('div');
   toolbar.className = 'drone-toolbar';
   document.body.appendChild(toolbar);
 
-  // Create dashed line for future trajectory
   const trajectoryColor = type==="red" ? 0xff0000 : 0xffffff;
   const futureTrajectoryGeometry = new THREE.BufferGeometry();
   const futureTrajectoryMaterial = new THREE.LineDashedMaterial({
@@ -227,9 +268,21 @@ function createDrone(type="white"){
   drones.push(drone);
 }
 
-// Initialize exactly 5 white and 2 red drones
-for(let i=0;i<5;i++){createDrone("white");}
-for(let i=0;i<2;i++){createDrone("red");}
+// === Scene Parameters ===
+let targetRedDrones = 2;
+let targetWhiteDrones = 5;
+let missileInterval = 16000;
+
+// Initialize drones
+for(let i=0;i<targetWhiteDrones;i++){createDrone("white");}
+for(let i=0;i<targetRedDrones;i++){createDrone("red");}
+
+// Apply settings from control panel
+function applySettings(){
+  targetRedDrones = parseInt(document.getElementById("red-drones").value) || 2;
+  targetWhiteDrones = parseInt(document.getElementById("white-drones").value) || 5;
+  missileInterval = (parseInt(document.getElementById("missile-interval").value) || 16) * 1000;
+}
 
 // === Missiles ===
 const missiles = [];
@@ -471,23 +524,21 @@ function animate(){
   updateCars();
   animateRadar();
 
-  // Spawn missile every 16 seconds
-  if(Date.now() - lastMissileTime > 16000){
+  // Spawn missile based on missileInterval
+  if(Date.now() - lastMissileTime > missileInterval){
     createMissile();
     lastMissileTime = Date.now();
   }
 
   // Update drone toolbars
   drones.forEach(drone => {
-    const altitude = Math.round(drone.position.y * 100); // Scale to meters (1 unit = 100m)
+    const altitude = Math.round(drone.position.y * 100);
     drone.userData.toolbar.textContent = `${altitude}m`;
     
-    // Convert 3D position to 2D screen coordinates
     const vector = drone.position.clone().project(camera);
     const x = (vector.x * 0.5 + 0.5) * window.innerWidth;
     const y = (-vector.y * 0.5 + 0.5) * window.innerHeight;
     
-    // Position toolbar above drone
     drone.userData.toolbar.style.left = `${x}px`;
     drone.userData.toolbar.style.top = `${y - 20}px`;
   });
@@ -522,7 +573,7 @@ function animate(){
       const distXZ = Math.sqrt((drone.position.x - data.target.position.x)**2 + (drone.position.z - data.target.position.z)**2);
       if(distXZ < 5){
         data.diving = true;
-        data.speed = data.diveSpeed; // Use dive speed for red drones when diving
+        data.speed = data.diveSpeed;
       }
       if(data.diving) addTrail(drone);
     } else {
@@ -533,7 +584,7 @@ function animate(){
       const targetPos = data.target.position.clone();
       if(drone.position.distanceTo(targetPos)<5 && !data.hasAttacked){
         data.hasAttacked=true;
-        data.speed=data.diveSpeed; // Ensure dive speed
+        data.speed=data.diveSpeed;
         targetPos.y=0;
       }
       const dir = targetPos.clone().sub(drone.position).normalize();
@@ -600,14 +651,14 @@ function animate(){
     }
   }
 
-  // Maintain exactly 5 white and 2 red drones
+  // Maintain drone counts
   let whiteCount = drones.filter(d=>d.userData.type==="white").length;
   let redCount = drones.filter(d=>d.userData.type==="red").length;
-  if(whiteCount<5) createDrone("white");
-  if(redCount<2) createDrone("red");
+  if(whiteCount<targetWhiteDrones) createDrone("white");
+  if(redCount<targetRedDrones) createDrone("red");
 
   // Prevent exceeding limits
-  while(whiteCount > 5){
+  while(whiteCount > targetWhiteDrones){
     const drone = drones.find(d=>d.userData.type==="white");
     if(drone){
       scene.remove(drone);
@@ -617,7 +668,7 @@ function animate(){
       whiteCount--;
     }
   }
-  while(redCount > 2){
+  while(redCount > targetRedDrones){
     const drone = drones.find(d=>d.userData.type==="red");
     if(drone){
       scene.remove(drone);

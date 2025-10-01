@@ -5,122 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>nno🇺🇦</title>
 <style>
-  body {
-    user-select: none;
-    box-sizing: border-box;
-    margin: 0;
-    height: 100vh;
-    background-color: #000000;
-    background-image: radial-gradient(#11581E, #041607);
-    background-repeat: no-repeat;
-    background-size: cover;
-    font-family: 'Inconsolata', Helvetica, sans-serif;
-    font-size: 1.5rem;
-    color: rgba(128, 255, 128, 0.8);
-    text-shadow:
-        0 0 1ex rgba(51, 255, 51, 1),
-        0 0 2px rgba(255, 255, 255, 0.8);
-    overflow: hidden;
-  }
-
-  .overlay {
-    pointer-events: none;
-    position: absolute;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(
-        180deg,
-        rgba(0, 0, 0, 0) 0%,
-        rgba(0, 0, 0, 0.3) 50%,
-        rgba(0, 0, 0, 0) 100%
-    );
-    background-size: auto 4px;
-    z-index: 1;
-  }
-
-  .overlay::before {
-    content: "";
-    pointer-events: none;
-    position: absolute;
-    display: block;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    width: 100%;
-    height: 100%;
-    background-image: linear-gradient(
-        0deg,
-        transparent 0%,
-        rgba(32, 128, 32, 0.2) 2%,
-        rgba(32, 128, 32, 0.8) 3%,
-        rgba(32, 128, 32, 0.2) 3%,
-        transparent 100%
-    );
-    background-repeat: no-repeat;
-    animation: scan 5s linear infinite;
-  }
-
-  @keyframes scan {
-    0% { background-position: 0 -100vh; }
-    60%, 100% { background-position: 0 100vh; }
-  }
-
-  .terminal {
-    position: absolute;
-    max-width: 90%;
-    padding: 1rem;
-    text-transform: uppercase;
-    z-index: 2;
-  }
-
-  .output {
-    color: rgba(128, 255, 128, 0.8);
-    text-shadow:
-        0 0 1px rgba(51, 255, 51, 0.4),
-        0 0 2px rgba(255, 255, 255, 0.8);
-  }
-
-  .output::before {
-    content: "> ";
-  }
-
-  .input {
-    color: rgba(192, 255, 192, 0.8);
-    text-shadow:
-        0 0 1px rgba(51, 255, 51, 0.4),
-        0 0 2px rgba(255, 255, 255, 0.8);
-  }
-
-  .input::before {
-    content: "$ ";
-  }
-
-  a {
-    color: #fff;
-    text-decoration: none;
-  }
-
-  a::before {
-    content: "[";
-  }
-
-  a::after {
-    content: "]";
-  }
-
-  .errorcode {
-    color: white;
-  }
-
-  canvas {
-    display: block;
-    position: absolute;
-    top: 0;
-    left: 0;
-    z-index: 0;
-  }
-
+  body { margin: 0; overflow: hidden; background: black; }
+  canvas { display: block; }
   #score {
     position: absolute;
     top: 10px;
@@ -133,9 +19,7 @@
     padding: 4px 12px;
     border-radius: 8px;
     text-align: center;
-    z-index: 2;
   }
-
   .drone-toolbar {
     position: absolute;
     color: white;
@@ -145,28 +29,11 @@
     padding: 2px 6px;
     border-radius: 4px;
     pointer-events: none;
-    z-index: 2;
-  }
-
-  @media (max-width: 600px) {
-    .terminal {
-      font-size: 1rem;
-      padding: 0.5rem;
-    }
-    #score {
-      font-size: 18px;
-      padding: 2px 8px;
-    }
   }
 </style>
 </head>
 <body>
-<div class="terminal" id="score">000</div>
-<div class="overlay"></div>
-<div class="terminal">
-  <h3>ППО</h3>
-  <h5><span class="errorcode">684753.26</span></h5>
-</div>
+<div id="score">000</div>
 <canvas id="canvas"></canvas>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
@@ -488,6 +355,7 @@ function createExplosion(position, scaleFactor=1, isMissile=false){
 function createHouseMarker(house, isMissileHit = false){
   house.traverse(child => {
     if(child instanceof THREE.Mesh && !child.isLineSegments){
+      // Set mesh to fully transparent to remove white fill
       child.material.opacity = 0;
       child.material.transparent = true;
       const geometry = new THREE.EdgesGeometry(child.geometry);
@@ -511,16 +379,17 @@ function createHouseMarker(house, isMissileHit = false){
 function addTrail(object, isMissile=false, isRocket=false){
   const isScout = !isMissile && !isRocket && object.userData.type === "scout";
   const isDivingRed = !isMissile && !isRocket && object.userData.type === "red" && object.userData.diving;
-  const trailGeo = new THREE.SphereGeometry(isScout ? 0.1 : (isRocket ? 0.1 : 0.08), 8, 8);
+  const trailGeo = new THREE.SphereGeometry(isScout ? 0.1 : (isRocket ? 0.1 : 0.08), 8, 8); // Increased size for visibility
   const trailColor = isRocket ? 0xffff00 : (isMissile ? 0xffff00 : 0xff5500);
   const trailMat = new THREE.MeshBasicMaterial({
     color: trailColor,
     transparent: true,
-    opacity: isRocket ? 0.6 : 0.8
+    opacity: isRocket ? 0.6 : 0.8 // Increased opacity for visibility
   });
   const particle = new THREE.Mesh(trailGeo, trailMat);
   particle.position.copy(object.position);
   scene.add(particle);
+  // Longer trail for diving red drones, standard for others
   const trailLife = isDivingRed ? 80 : (isScout ? 50 : (isRocket ? 60 : 30));
   object.userData.trail.push({mesh: particle, life: trailLife});
   droneTrails.push(object.userData.trail[object.userData.trail.length-1]);

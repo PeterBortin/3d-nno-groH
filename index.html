@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>nno🇺🇦</title>
 <style>
   body { margin: 0; overflow: hidden; background: black; }
@@ -353,6 +353,13 @@ function createExplosion(position, scaleFactor=1, isMissile=false){
 
 // === House Marker ===
 function createHouseMarker(house, isMissileHit = false){
+  if(!house || house.userData.isHit) return;
+  // Clear flashing if any
+  if(house.userData.flashInterval){
+    clearInterval(house.userData.flashInterval);
+    house.userData.flashInterval = null;
+    house.userData.isFlashing = false;
+  }
   house.traverse(child => {
     if(child instanceof THREE.Mesh && !child.isLineSegments){
       // Set mesh to fully transparent to remove white fill
@@ -367,7 +374,7 @@ function createHouseMarker(house, isMissileHit = false){
         gapSize: 0.2
       }) : new THREE.LineBasicMaterial({color: 0xffa500});
       const line = new THREE.LineSegments(geometry, material);
-      if(isMissileHit) line.computeLineDistances();
+      if(isMissileHit && line.computeLineDistances) line.computeLineDistances();
       line.position.copy(child.position);
       house.add(line);
     }
@@ -375,7 +382,36 @@ function createHouseMarker(house, isMissileHit = false){
   house.userData.isHit = true;
 }
 
-// === Drone and Rocket Trail ===
+// === Car Marker (новая функция) ===
+function createCarMarker(car, isMissileHit = false){
+  if(!car || car.userData.isHit) return;
+  // stop the car
+  car.userData.isHit = true;
+  car.userData.baseSpeed = 0;
+  car.userData.speed = 0;
+
+  // hide car body visually (like houses), add edges
+  if(car.material){
+    car.material.opacity = 0;
+    car.material.transparent = true;
+  }
+  const geometry = new THREE.EdgesGeometry(car.geometry);
+  const material = isMissileHit ? new THREE.LineDashedMaterial({
+    color: 0xffa500,
+    linewidth: 1,
+    scale: 2,
+    dashSize: 0.2,
+    gapSize: 0.2
+  }) : new THREE.LineBasicMaterial({color: 0xffa500});
+  const line = new THREE.LineSegments(geometry, material);
+  if(isMissileHit && line.computeLineDistances) line.computeLineDistances();
+  line.position.copy(car.position);
+  line.rotation.copy(car.rotation);
+  scene.add(line);
+  car.userData.marker = line;
+}
+
+// === Trail helper ===
 function addTrail(object, isMissile=false, isRocket=false){
   const isScout = !isMissile && !isRocket && object.userData.type === "scout";
   const isDivingRed = !isMissile && !isRocket && object.userData.type === "red" && object.userData.diving;
@@ -393,6 +429,130 @@ function addTrail(object, isMissile=false, isRocket=false){
   const trailLife = isDivingRed ? 80 : (isScout ? 50 : (isRocket ? 60 : 30));
   object.userData.trail.push({mesh: particle, life: trailLife});
   droneTrails.push(object.userData.trail[object.userData.trail.length-1]);
+}
+
+// === Cars ===
+const cars = [];
+function spawnCars(){
+  roads.forEach(road=>{
+    const isHorizontal = road.w > road.h;
+    const numCars = 2;
+    for(let i=0;i<numCars;i++){
+      const car = new THREE.Mesh(new THREE.BoxGeometry(0.4,0.2,0.4), new THREE.MeshBasicMaterial({color:0xffffff, transparent:true, opacity:0.5}));
+      const speed = 0.01 + Math.random()*0.02;
+      if(isHorizontal){
+        const startX = road.x - road.w/2 + Math.random()*road.w;
+        car.position.set(startX,0.1,road.z);
+        car.userData = {speed, baseSpeed: speed, isHorizontal:true, road};
+      } else {
+        const startZ = road.z - road.h/2 + Math.random()*road.h;
+        car.position.set(road.x,0.1,startZ);
+        car.userData = {speed, baseSpeed: speed, isHorizontal:false, road};
+      }
+      scene.add(car);
+      cars.push(car);
+    }
+  });
+}
+spawnCars();
+
+// spawn a single car on provided road (используется при замене повреждённой машины)
+function spawnSingleCar(road){
+  const isHorizontal = road.w > road.h;
+  const car = new THREE.Mesh(new THREE.BoxGeometry(0.4,0.2,0.4), new THREE.MeshBasicMaterial({color:0xffffff, transparent:true, opacity:0.5}));
+  const speed = 0.01 + Math.random()*0.02;
+  if(isHorizontal){
+    const startX = road.x - road.w/2 + Math.random()*road.w;
+    car.position.set(startX,0.1,road.z);
+    car.userData = {speed, baseSpeed: speed, isHorizontal:true, road};
+  } else {
+    const startZ = road.z - road.h/2 + Math.random()*road.h;
+    car.position.set(road.x,0.1,startZ);
+    car.userData = {speed, baseSpeed: speed, isHorizontal:false, road};
+  }
+  scene.add(car);
+  cars.push(car);
+  return car;
+}
+
+// === Cars Update (stop&go) ===
+function updateCars(){
+  const safeDistance = 1.0;
+  const accel = 0.0005;
+  const brake = 0.001;
+
+  for(const car of cars){
+    const data = car.userData;
+    // if car is marked as hit, keep stopped
+    if(data.isHit) continue;
+
+    let nearestDist = Infinity;
+
+    for(const other of cars){
+      if(other === car) continue;
+      const oData = other.userData;
+      if(oData.isHorizontal !== data.isHorizontal) continue;
+      if(oData.road !== data.road) continue;
+
+      if(data.isHorizontal){
+        if(other.position.x > car.position.x){
+          const dist = other.position.x - car.position.x;
+          if(dist < nearestDist) nearestDist = dist;
+        }
+      } else {
+        if(other.position.z > car.position.z){
+          const dist = other.position.z - car.position.z;
+          if(dist < nearestDist) nearestDist = dist;
+        }
+      }
+    }
+
+    if(nearestDist < safeDistance){
+      data.speed = Math.max(0, data.speed - brake);
+    } else if(data.speed < data.baseSpeed){
+      data.speed = Math.min(data.baseSpeed, data.speed + accel);
+    }
+
+    if(data.isHorizontal){
+      car.position.x += data.speed;
+      if(car.position.x > data.road.x + data.road.w / 2) car.position.x = data.road.x - data.road.w / 2;
+    } else {
+      car.position.z += data.speed;
+      if(car.position.z > data.road.z + data.road.h / 2) car.position.z = data.road.z - data.road.h / 2;
+    }
+  }
+}
+
+// === Unified blast damage (новая функция) ===
+function applyBlastDamage(center, blastRadius = 3, isMissile = false){
+  // Houses
+  for(let j = houses.length - 1; j >= 0; j--){
+    const house = houses[j];
+    if(house.userData.isHit) continue;
+    const dist = Math.sqrt((house.position.x - center.x)**2 + (house.position.z - center.z)**2);
+    if(dist < blastRadius){
+      // Explosion on house
+      createExplosion(house.position, 1, isMissile);
+      createHouseMarker(house, isMissile);
+      score = Math.min(score + 1, 999);
+      updateScore();
+    }
+  }
+  // Cars
+  for(let j = cars.length - 1; j >= 0; j--){
+    const car = cars[j];
+    if(car.userData.isHit) continue;
+    const dist = Math.sqrt((car.position.x - center.x)**2 + (car.position.z - center.z)**2);
+    if(dist < blastRadius){
+      // Mark car: freeze, outline
+      createExplosion(car.position, 0.5, isMissile);
+      createCarMarker(car, isMissile);
+      // spawn a new car on the same road to keep traffic
+      spawnSingleCar(car.userData.road);
+      score = Math.min(score + 1, 999);
+      updateScore();
+    }
+  }
 }
 
 // === Score ===
@@ -475,76 +635,6 @@ document.addEventListener("touchstart",onPointerDown);
 document.addEventListener("touchmove",onPointerMove);
 document.addEventListener("touchend",onPointerUp);
 document.addEventListener("contextmenu",(e)=>e.preventDefault());
-
-// === Cars ===
-const cars = [];
-function spawnCars(){
-  roads.forEach(road=>{
-    const isHorizontal = road.w > road.h;
-    const numCars = 2;
-    for(let i=0;i<numCars;i++){
-      const car = new THREE.Mesh(new THREE.BoxGeometry(0.4,0.2,0.4), new THREE.MeshBasicMaterial({color:0xffffff, transparent:true, opacity:0.5}));
-      const speed = 0.01 + Math.random()*0.02;
-      if(isHorizontal){
-        const startX = road.x - road.w/2 + Math.random()*road.w;
-        car.position.set(startX,0.1,road.z);
-        car.userData = {speed, baseSpeed: speed, isHorizontal:true, road};
-      } else {
-        const startZ = road.z - road.h/2 + Math.random()*road.h;
-        car.position.set(road.x,0.1,startZ);
-        car.userData = {speed, baseSpeed: speed, isHorizontal:false, road};
-      }
-      scene.add(car);
-      cars.push(car);
-    }
-  });
-}
-spawnCars();
-
-// === Cars Update (stop&go) ===
-function updateCars(){
-  const safeDistance = 1.0;
-  const accel = 0.0005;
-  const brake = 0.001;
-
-  for(const car of cars){
-    const data = car.userData;
-    let nearestDist = Infinity;
-
-    for(const other of cars){
-      if(other === car) continue;
-      const oData = other.userData;
-      if(oData.isHorizontal !== data.isHorizontal) continue;
-      if(oData.road !== data.road) continue;
-
-      if(data.isHorizontal){
-        if(other.position.x > car.position.x){
-          const dist = other.position.x - car.position.x;
-          if(dist < nearestDist) nearestDist = dist;
-        }
-      } else {
-        if(other.position.z > car.position.z){
-          const dist = other.position.z - car.position.z;
-          if(dist < nearestDist) nearestDist = dist;
-        }
-      }
-    }
-
-    if(nearestDist < safeDistance){
-      data.speed = Math.max(0, data.speed - brake);
-    } else if(data.speed < data.baseSpeed){
-      data.speed = Math.min(data.baseSpeed, data.speed + accel);
-    }
-
-    if(data.isHorizontal){
-      car.position.x += data.speed;
-      if(car.position.x > data.road.x + data.road.w / 2) car.position.x = data.road.x - data.road.w / 2;
-    } else {
-      car.position.z += data.speed;
-      if(car.position.z > data.road.z + data.road.h / 2) car.position.z = data.road.z - data.road.h / 2;
-    }
-  }
-}
 
 // === Animate ===
 function animate(){
@@ -639,8 +729,10 @@ function animate(){
       futurePositions[j*3+1] = futurePoints[j].y;
       futurePositions[j*3+2] = futurePoints[j].z;
     }
-    data.futureTrajectoryLine.geometry.setAttribute('position', new THREE.BufferAttribute(futurePositions, 3));
-    data.futureTrajectoryLine.computeLineDistances();
+    if(data.futureTrajectoryLine && data.futureTrajectoryLine.geometry){
+      data.futureTrajectoryLine.geometry.setAttribute('position', new THREE.BufferAttribute(futurePositions, 3));
+      if(data.futureTrajectoryLine.computeLineDistances) data.futureTrajectoryLine.computeLineDistances();
+    }
 
     if(data.type === "red" && data.diving){
       addTrail(drone);
@@ -659,16 +751,21 @@ function animate(){
       
       if(drone.position.distanceTo(targetPos)<0.1){
         createExplosion(drone.position);
+        // Apply local blast damage (e.g. cars close to house/drone impact)
+        applyBlastDamage(drone.position, 2.0, false);
+
         if(!data.target.userData.isHit){
           createHouseMarker(data.target, false);
         }
         scene.remove(drone);
-        document.body.removeChild(data.toolbar);
-        scene.remove(data.futureTrajectoryLine);
-        data.futureTrajectoryLine.geometry.dispose();
-        data.futureTrajectoryLine.material.dispose();
+        if(data.toolbar && document.body.contains(data.toolbar)) document.body.removeChild(data.toolbar);
+        if(data.futureTrajectoryLine){
+          scene.remove(data.futureTrajectoryLine);
+          try{ data.futureTrajectoryLine.geometry.dispose(); data.futureTrajectoryLine.material.dispose(); }catch(e){}
+        }
         if(data.target.userData.flashInterval){
           clearInterval(data.target.userData.flashInterval);
+          data.target.userData.flashInterval = null;
           data.target.traverse(child => {
             if(child instanceof THREE.Mesh && !child.isLineSegments){
               child.material.color.set(0xffffff);
@@ -683,11 +780,15 @@ function animate(){
       drone.position.add(data.direction.clone().multiplyScalar(data.speed));
       if(drone.position.y <= 0 || Math.abs(drone.position.x)>16 || Math.abs(drone.position.z)>16){
         createExplosion(new THREE.Vector3(drone.position.x, Math.max(drone.position.y,0), drone.position.z));
+        // small blast effect if any
+        applyBlastDamage(drone.position, 1.5, false);
+
         scene.remove(drone);
-        document.body.removeChild(data.toolbar);
-        scene.remove(data.futureTrajectoryLine);
-        data.futureTrajectoryLine.geometry.dispose();
-        data.futureTrajectoryLine.material.dispose();
+        if(data.toolbar && document.body.contains(data.toolbar)) document.body.removeChild(data.toolbar);
+        if(data.futureTrajectoryLine){
+          scene.remove(data.futureTrajectoryLine);
+          try{ data.futureTrajectoryLine.geometry.dispose(); data.futureTrajectoryLine.material.dispose(); }catch(e){}
+        }
         drones.splice(i,1);
       }
     }
@@ -703,19 +804,11 @@ function animate(){
     }
     if(missile.position.y <= 0){
       createExplosion(missile.position, 10, true);
+      // apply damage to houses and cars in radius
+      applyBlastDamage(missile.position, 3, true);
+
       scene.remove(missile);
       missiles.splice(i, 1);
-      const blastRadius = 3;
-      for(let j = houses.length - 1; j >= 0; j--){
-        const house = houses[j];
-        const dist = Math.sqrt((house.position.x - missile.position.x)**2 + (house.position.z - missile.position.z)**2);
-        if(dist < blastRadius && !house.userData.isHit){
-          createExplosion(house.position);
-          createHouseMarker(house, true);
-          score = Math.min(score + 1, 999);
-          updateScore();
-        }
-      }
     }
   }
 
@@ -742,10 +835,11 @@ function animate(){
     const drone = drones.find(d=>d.userData.type==="white");
     if(drone){
       scene.remove(drone);
-      document.body.removeChild(drone.userData.toolbar);
-      scene.remove(drone.userData.futureTrajectoryLine);
-      drone.userData.futureTrajectoryLine.geometry.dispose();
-      drone.userData.futureTrajectoryLine.material.dispose();
+      if(drone.userData.toolbar && document.body.contains(drone.userData.toolbar)) document.body.removeChild(drone.userData.toolbar);
+      if(drone.userData.futureTrajectoryLine){
+        scene.remove(drone.userData.futureTrajectoryLine);
+        try{ drone.userData.futureTrajectoryLine.geometry.dispose(); drone.userData.futureTrajectoryLine.material.dispose(); }catch(e){}
+      }
       drones.splice(drones.indexOf(drone),1);
       whiteCount--;
     }
@@ -754,10 +848,11 @@ function animate(){
     const drone = drones.find(d=>d.userData.type==="red");
     if(drone){
       scene.remove(drone);
-      document.body.removeChild(drone.userData.toolbar);
-      scene.remove(drone.userData.futureTrajectoryLine);
-      drone.userData.futureTrajectoryLine.geometry.dispose();
-      drone.userData.futureTrajectoryLine.material.dispose();
+      if(drone.userData.toolbar && document.body.contains(drone.userData.toolbar)) document.body.removeChild(drone.userData.toolbar);
+      if(drone.userData.futureTrajectoryLine){
+        scene.remove(drone.userData.futureTrajectoryLine);
+        try{ drone.userData.futureTrajectoryLine.geometry.dispose(); drone.userData.futureTrajectoryLine.material.dispose(); }catch(e){}
+      }
       drones.splice(drones.indexOf(drone),1);
       redCount--;
     }
@@ -794,26 +889,29 @@ function animate(){
     addTrail(rocket, false, true);
 
     if(distanceToTarget < 0.1){
+      // explosion & damage in a small radius
+      createExplosion(rocket.position);
+      applyBlastDamage(rocket.position, 2.0, false);
+
       if(missiles.includes(target) && target.userData.isFalling){
-        createExplosion(rocket.position);
+        // destroy missile
         scene.remove(rocket);
-        rocket.geometry.dispose();
-        rocket.material.dispose();
+        try{ rocket.geometry.dispose(); rocket.material.dispose(); }catch(e){}
         scene.remove(target);
         missiles.splice(missiles.indexOf(target),1);
         rockets.splice(i,1);
         score = Math.min(score+1,999);
         updateScore();
       } else if(drones.includes(target)){
-        createExplosion(rocket.position);
+        // destroy drone
         scene.remove(rocket);
-        rocket.geometry.dispose();
-        rocket.material.dispose();
+        try{ rocket.geometry.dispose(); rocket.material.dispose(); }catch(e){}
         scene.remove(target);
-        document.body.removeChild(target.userData.toolbar);
-        scene.remove(target.userData.futureTrajectoryLine);
-        target.userData.futureTrajectoryLine.geometry.dispose();
-        target.userData.futureTrajectoryLine.material.dispose();
+        if(target.userData.toolbar && document.body.contains(target.userData.toolbar)) document.body.removeChild(target.userData.toolbar);
+        if(target.userData.futureTrajectoryLine){
+          scene.remove(target.userData.futureTrajectoryLine);
+          try{ target.userData.futureTrajectoryLine.geometry.dispose(); target.userData.futureTrajectoryLine.material.dispose(); }catch(e){}
+        }
         drones.splice(drones.indexOf(target),1);
         rockets.splice(i,1);
         score = Math.min(score+1,999);
@@ -822,8 +920,7 @@ function animate(){
     }
     if(Math.abs(rocket.position.x)>999||Math.abs(rocket.position.z)>999){
       scene.remove(rocket);
-      rocket.geometry.dispose();
-      rocket.material.dispose();
+      try{ rocket.geometry.dispose(); rocket.material.dispose(); }catch(e){}
       rockets.splice(i,1);
     }
   }

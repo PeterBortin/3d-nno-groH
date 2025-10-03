@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>nno🇺🇦</title>
 <style>
-  body { margin: 0; overflow: hidden; background: black; overscroll-behavior: none; }
-  canvas { display: block; touch-action: none; }
+  body { margin: 0; overflow: hidden; background: black; }
+  canvas { display: block; }
   #score {
     position: absolute;
     top: 10px;
@@ -193,7 +193,7 @@ spawnHouses();
 
 // === Drones ===
 const drones = [];
-const droneTrails = [];
+const trails = [];
 function createDrone(type="white"){
   let color;
   if(type === "red") color = 0xff0000;
@@ -354,7 +354,6 @@ function createExplosion(position, scaleFactor=1, isMissile=false){
 // === House Marker ===
 function createHouseMarker(house, isMissileHit = false){
   if(!house || house.userData.isHit) return;
-  // Clear flashing if any
   if(house.userData.flashInterval){
     clearInterval(house.userData.flashInterval);
     house.userData.flashInterval = null;
@@ -362,7 +361,6 @@ function createHouseMarker(house, isMissileHit = false){
   }
   house.traverse(child => {
     if(child instanceof THREE.Mesh && !child.isLineSegments){
-      // Set mesh to fully transparent to remove white fill
       child.material.opacity = 0;
       child.material.transparent = true;
       const geometry = new THREE.EdgesGeometry(child.geometry);
@@ -385,12 +383,16 @@ function createHouseMarker(house, isMissileHit = false){
 // === Car Marker ===
 function createCarMarker(car, isMissileHit = false){
   if(!car || car.userData.isHit) return;
-  // stop the car
   car.userData.isHit = true;
   car.userData.baseSpeed = 0;
   car.userData.speed = 0;
 
-  // hide car body visually (like houses), add edges
+  if(car.userData.flashInterval){
+    clearInterval(car.userData.flashInterval);
+    car.userData.flashInterval = null;
+    car.userData.isFlashing = false;
+  }
+
   if(car.material){
     car.material.opacity = 0;
     car.material.transparent = true;
@@ -409,31 +411,58 @@ function createCarMarker(car, isMissileHit = false){
   line.rotation.copy(car.rotation);
   scene.add(line);
   car.userData.marker = line;
+}
 
-  // remove car from scene
-  scene.remove(car);
-  car.geometry.dispose();
-  car.material.dispose();
+// === Person Marker ===
+function createPersonMarker(person, isMissileHit = false){
+  if(!person || person.userData.isHit) return;
+  person.userData.isHit = true;
+  person.userData.baseSpeed = 0;
+  person.userData.speed = 0;
+
+  if(person.userData.flashInterval){
+    clearInterval(person.userData.flashInterval);
+    person.userData.flashInterval = null;
+    person.userData.isFlashing = false;
+  }
+
+  if(person.material){
+    person.material.opacity = 0;
+    person.material.transparent = true;
+  }
+  const geometry = new THREE.EdgesGeometry(person.geometry);
+  const material = isMissileHit ? new THREE.LineDashedMaterial({
+    color: 0xffa500,
+    linewidth: 1,
+    scale: 2,
+    dashSize: 0.2,
+    gapSize: 0.2
+  }) : new THREE.LineBasicMaterial({color: 0xffa500});
+  const line = new THREE.LineSegments(geometry, material);
+  if(isMissileHit && line.computeLineDistances) line.computeLineDistances();
+  line.position.copy(person.position);
+  line.rotation.copy(person.rotation);
+  scene.add(line);
+  person.userData.marker = line;
 }
 
 // === Trail helper ===
 function addTrail(object, isMissile=false, isRocket=false){
   const isScout = !isMissile && !isRocket && object.userData.type === "scout";
   const isDivingRed = !isMissile && !isRocket && object.userData.type === "red" && object.userData.diving;
-  const trailGeo = new THREE.SphereGeometry(isScout ? 0.1 : (isRocket ? 0.1 : 0.08), 8, 8); // Increased size for visibility
+  const trailGeo = new THREE.SphereGeometry(isScout ? 0.1 : (isRocket ? 0.1 : 0.08), 8, 8);
   const trailColor = isRocket ? 0xffff00 : (isMissile ? 0xffff00 : 0xff5500);
   const trailMat = new THREE.MeshBasicMaterial({
     color: trailColor,
     transparent: true,
-    opacity: isRocket ? 0.6 : 0.8 // Increased opacity for visibility
+    opacity: isRocket ? 0.6 : 0.8
   });
   const particle = new THREE.Mesh(trailGeo, trailMat);
   particle.position.copy(object.position);
   scene.add(particle);
-  // Longer trail for diving red drones, standard for others
   const trailLife = isDivingRed ? 80 : (isScout ? 50 : (isRocket ? 60 : 30));
   object.userData.trail.push({mesh: particle, life: trailLife});
-  droneTrails.push(object.userData.trail[object.userData.trail.length-1]);
+  trails.push(object.userData.trail[object.userData.trail.length-1]);
 }
 
 // === Cars ===
@@ -448,11 +477,11 @@ function spawnCars(){
       if(isHorizontal){
         const startX = road.x - road.w/2 + Math.random()*road.w;
         car.position.set(startX,0.1,road.z);
-        car.userData = {speed, baseSpeed: speed, isHorizontal:true, road, isHit: false};
+        car.userData = {speed, baseSpeed: speed, isHorizontal:true, road, isHit: false, flashInterval: null, isFlashing: false};
       } else {
         const startZ = road.z - road.h/2 + Math.random()*road.h;
         car.position.set(road.x,0.1,startZ);
-        car.userData = {speed, baseSpeed: speed, isHorizontal:false, road, isHit: false};
+        car.userData = {speed, baseSpeed: speed, isHorizontal:false, road, isHit: false, flashInterval: null, isFlashing: false};
       }
       scene.add(car);
       cars.push(car);
@@ -461,7 +490,6 @@ function spawnCars(){
 }
 spawnCars();
 
-// spawn a single car on provided road (используется при замене повреждённой машины)
 function spawnSingleCar(road){
   const isHorizontal = road.w > road.h;
   const car = new THREE.Mesh(new THREE.BoxGeometry(0.4,0.2,0.4), new THREE.MeshBasicMaterial({color:0xffffff, transparent:true, opacity:0.5}));
@@ -469,18 +497,117 @@ function spawnSingleCar(road){
   if(isHorizontal){
     const startX = road.x - road.w/2 + Math.random()*road.w;
     car.position.set(startX,0.1,road.z);
-    car.userData = {speed, baseSpeed: speed, isHorizontal:true, road, isHit: false};
+    car.userData = {speed, baseSpeed: speed, isHorizontal:true, road, isHit: false, flashInterval: null, isFlashing: false};
   } else {
     const startZ = road.z - road.h/2 + Math.random()*road.h;
     car.position.set(road.x,0.1,startZ);
-    car.userData = {speed, baseSpeed: speed, isHorizontal:false, road, isHit: false};
+    car.userData = {speed, baseSpeed: speed, isHorizontal:false, road, isHit: false, flashInterval: null, isFlashing: false};
   }
   scene.add(car);
   cars.push(car);
   return car;
 }
 
-// === Cars Update (stop&go) ===
+// === People ===
+const people = [];
+function spawnPeople(){
+  roads.forEach(road=>{
+    const isHorizontal = road.w > road.h;
+    const numPeople = 2;
+    for(let i=0;i<numPeople;i++){
+      const person = new THREE.Mesh(new THREE.BoxGeometry(0.2,0.1,0.2), new THREE.MeshBasicMaterial({color:0xffffff, transparent:true, opacity:0.5}));
+      const baseSpeed = (0.01 + Math.random()*0.02) / 8;
+      let startX, startZ, endX, endZ;
+      if(isHorizontal){
+        startX = road.x - road.w/2 + Math.random()*road.w;
+        startZ = road.z;
+        endX = road.x - road.w/2 + Math.random()*road.w;
+        endZ = road.z;
+      } else {
+        startX = road.x;
+        startZ = road.z - road.h/2 + Math.random()*road.h;
+        endX = road.x;
+        endZ = road.z - road.h/2 + Math.random()*road.h;
+      }
+      person.position.set(startX,0.05,startZ);
+      const startPos = person.position.clone();
+      const endPos = new THREE.Vector3(endX, 0.05, endZ);
+      const control1 = new THREE.Vector3(
+        startX + (Math.random() - 0.5) * (isHorizontal ? road.w : road.h) * 0.5,
+        0.05,
+        startZ + (Math.random() - 0.5) * (isHorizontal ? road.w : road.h) * 0.5
+      );
+      const control2 = new THREE.Vector3(
+        endX + (Math.random() - 0.5) * (isHorizontal ? road.w : road.h) * 0.5,
+        0.05,
+        endZ + (Math.random() - 0.5) * (isHorizontal ? road.w : road.h) * 0.5
+      );
+      const curve = new THREE.CubicBezierCurve3(startPos, control1, control2, endPos);
+      person.userData = {
+        speed: baseSpeed,
+        baseSpeed,
+        isHorizontal,
+        road,
+        isHit: false,
+        flashInterval: null,
+        isFlashing: false,
+        curve,
+        t: 0
+      };
+      scene.add(person);
+      people.push(person);
+    }
+  });
+}
+spawnPeople();
+
+function spawnSinglePerson(road){
+  const isHorizontal = road.w > road.h;
+  const person = new THREE.Mesh(new THREE.BoxGeometry(0.2,0.1,0.2), new THREE.MeshBasicMaterial({color:0xffffff, transparent:true, opacity:0.5}));
+  const baseSpeed = (0.01 + Math.random()*0.02) / 8;
+  let startX, startZ, endX, endZ;
+  if(isHorizontal){
+    startX = road.x - road.w/2 + Math.random()*road.w;
+    startZ = road.z;
+    endX = road.x - road.w/2 + Math.random()*road.w;
+    endZ = road.z;
+  } else {
+    startX = road.x;
+    startZ = road.z - road.h/2 + Math.random()*road.h;
+    endX = road.x;
+    endZ = road.z - road.h/2 + Math.random()*road.h;
+  }
+  person.position.set(startX,0.05,startZ);
+  const startPos = person.position.clone();
+  const endPos = new THREE.Vector3(endX, 0.05, endZ);
+  const control1 = new THREE.Vector3(
+    startX + (Math.random() - 0.5) * (isHorizontal ? road.w : road.h) * 0.5,
+    0.05,
+    startZ + (Math.random() - 0.5) * (isHorizontal ? road.w : road.h) * 0.5
+  );
+  const control2 = new THREE.Vector3(
+    endX + (Math.random() - 0.5) * (isHorizontal ? road.w : road.h) * 0.5,
+    0.05,
+    endZ + (Math.random() - 0.5) * (isHorizontal ? road.w : road.h) * 0.5
+  );
+  const curve = new THREE.CubicBezierCurve3(startPos, control1, control2, endPos);
+  person.userData = {
+    speed: baseSpeed,
+    baseSpeed,
+    isHorizontal,
+    road,
+    isHit: false,
+    flashInterval: null,
+    isFlashing: false,
+    curve,
+    t: 0
+  };
+  scene.add(person);
+  people.push(person);
+  return person;
+}
+
+// === Cars Update (stop&go, ignoring destroyed cars) ===
 function updateCars(){
   const safeDistance = 1.0;
   const accel = 0.0005;
@@ -488,15 +615,14 @@ function updateCars(){
 
   for(const car of cars){
     const data = car.userData;
-    // if car is marked as hit, keep stopped
     if(data.isHit) continue;
 
     let nearestDist = Infinity;
 
     for(const other of cars){
       if(other === car) continue;
+      if(other.userData.isHit) continue;
       const oData = other.userData;
-      if(oData.isHit) continue;
       if(oData.isHorizontal !== data.isHorizontal) continue;
       if(oData.road !== data.road) continue;
 
@@ -529,34 +655,102 @@ function updateCars(){
   }
 }
 
+// === People Update (stop&go and Bezier movement) ===
+function updatePeople(){
+  const safeDistance = 0.5;
+  const accel = 0.0000625;
+  const brake = 0.000125;
+
+  for(const person of people){
+    const data = person.userData;
+    if(data.isHit) continue;
+
+    let nearestDist = Infinity;
+
+    for(const other of people){
+      if(other === person) continue;
+      const oData = other.userData;
+      if(oData.isHorizontal !== data.isHorizontal) continue;
+      if(oData.road !== data.road) continue;
+
+      if(data.isHorizontal){
+        if(other.position.x > person.position.x){
+          const dist = other.position.x - person.position.x;
+          if(dist < nearestDist) nearestDist = dist;
+        }
+      } else {
+        if(other.position.z > person.position.z){
+          const dist = other.position.z - person.position.z;
+          if(dist < nearestDist) nearestDist = dist;
+        }
+      }
+    }
+
+    if(nearestDist < safeDistance){
+      data.speed = Math.max(0, data.speed - brake);
+    } else if(data.speed < data.baseSpeed){
+      data.speed = Math.min(data.baseSpeed, data.speed + accel);
+    }
+
+    // Update position along Bezier curve
+    if(data.t < 1){
+      data.t = Math.min(data.t + data.speed, 1);
+      person.position.copy(data.curve.getPoint(data.t));
+    } else {
+      // Create new Bezier curve when reaching the end
+      const startPos = person.position.clone();
+      const endX = data.isHorizontal ? data.road.x - data.road.w/2 + Math.random()*data.road.w : data.road.x;
+      const endZ = data.isHorizontal ? data.road.z : data.road.z - data.road.h/2 + Math.random()*data.road.h;
+      const endPos = new THREE.Vector3(endX, 0.05, endZ);
+      const control1 = new THREE.Vector3(
+        startPos.x + (Math.random() - 0.5) * (data.isHorizontal ? data.road.w : data.road.h) * 0.5,
+        0.05,
+        startPos.z + (Math.random() - 0.5) * (data.isHorizontal ? data.road.w : data.road.h) * 0.5
+      );
+      const control2 = new THREE.Vector3(
+        endX + (Math.random() - 0.5) * (data.isHorizontal ? data.road.w : data.road.h) * 0.5,
+        0.05,
+        endZ + (Math.random() - 0.5) * (data.isHorizontal ? data.road.w : data.road.h) * 0.5
+      );
+      data.curve = new THREE.CubicBezierCurve3(startPos, control1, control2, endPos);
+      data.t = 0;
+    }
+  }
+}
+
 // === Unified blast damage ===
 function applyBlastDamage(center, blastRadius = 3, isMissile = false){
-  // Houses
   for(let j = houses.length - 1; j >= 0; j--){
     const house = houses[j];
     if(house.userData.isHit) continue;
-    const dist = Math.sqrt((house.position.x - center.x)**2 + (house.position.y - center.y)**2 + (house.position.z - center.z)**2);
+    const dist = Math.sqrt((house.position.x - center.x)**2 + (house.position.z - center.z)**2);
     if(dist < blastRadius){
-      // Explosion on house
       createExplosion(house.position, 1, isMissile);
       createHouseMarker(house, isMissile);
       score = Math.min(score + 1, 999);
       updateScore();
     }
   }
-  // Cars
   for(let j = cars.length - 1; j >= 0; j--){
     const car = cars[j];
     if(car.userData.isHit) continue;
-    const dist = Math.sqrt((car.position.x - center.x)**2 + (car.position.y - center.y)**2 + (car.position.z - center.z)**2);
+    const dist = Math.sqrt((car.position.x - center.x)**2 + (car.position.z - center.z)**2);
     if(dist < blastRadius){
-      // Mark car: freeze, outline
       createExplosion(car.position, 0.5, isMissile);
       createCarMarker(car, isMissile);
-      // spawn a new car on the same road to keep traffic
       spawnSingleCar(car.userData.road);
-      // remove from cars array
-      cars.splice(j, 1);
+      score = Math.min(score + 1, 999);
+      updateScore();
+    }
+  }
+  for(let j = people.length - 1; j >= 0; j--){
+    const person = people[j];
+    if(person.userData.isHit) continue;
+    const dist = Math.sqrt((person.position.x - center.x)**2 + (person.position.z - center.z)**2);
+    if(dist < blastRadius){
+      createExplosion(person.position, 0.25, isMissile);
+      createPersonMarker(person, isMissile);
+      spawnSinglePerson(person.userData.road);
       score = Math.min(score + 1, 999);
       updateScore();
     }
@@ -648,6 +842,7 @@ document.addEventListener("contextmenu",(e)=>e.preventDefault());
 function animate(){
   requestAnimationFrame(animate);
   updateCars();
+  updatePeople();
   animateRadar();
 
   // Spawn missile based on missileInterval
@@ -695,23 +890,19 @@ function animate(){
     if(data.type === "red" && data.target){
       const distXZ = Math.sqrt((drone.position.x - data.target.position.x)**2 + (drone.position.z - data.target.position.z)**2);
       if(distXZ > 8 && !data.diving){
-        // Horizontal phase
         data.direction = new THREE.Vector3().subVectors(data.intermediateTarget, drone.position).normalize();
         if(drone.position.distanceTo(data.intermediateTarget) < 1){
-          // Move to descent phase
           data.intermediateTarget = null;
           data.diving = true;
           data.direction = new THREE.Vector3().subVectors(data.target.position, drone.position).normalize();
         }
       } else if(distXZ <= 8 && distXZ > 5){
-        // Descent phase
         data.diving = true;
         data.speed = data.diveSpeed;
         const targetPos = data.target.position.clone();
         targetPos.y = Math.max(drone.position.y - 1, 0);
         data.direction = new THREE.Vector3().subVectors(targetPos, drone.position).normalize();
       } else if(distXZ <= 5){
-        // Acceleration phase
         data.speed = drone.position.y <= 4 ? data.diveBoostSpeed : data.diveSpeed;
         const targetPos = data.target.position.clone();
         targetPos.y = 0;
@@ -759,7 +950,6 @@ function animate(){
       
       if(drone.position.distanceTo(targetPos)<0.1){
         createExplosion(drone.position);
-        // Apply local blast damage (e.g. cars close to house/drone impact)
         applyBlastDamage(drone.position, 2.0, false);
 
         if(!data.target.userData.isHit){
@@ -781,23 +971,15 @@ function animate(){
           });
         }
         drones.splice(i,1);
+        score = Math.min(score+1,999);
+        updateScore();
       }
     } else {
       drone.position.add(data.direction.clone().multiplyScalar(data.speed));
       if(drone.position.y <= 0 || Math.abs(drone.position.x)>16 || Math.abs(drone.position.z)>16){
         createExplosion(new THREE.Vector3(drone.position.x, Math.max(drone.position.y,0), drone.position.z));
-        // small blast effect if any
         applyBlastDamage(drone.position, 1.5, false);
 
-        if(data.target && data.target.userData.flashInterval){
-          clearInterval(data.target.userData.flashInterval);
-          data.target.userData.flashInterval = null;
-          data.target.traverse(child => {
-            if(child instanceof THREE.Mesh && !child.isLineSegments){
-              child.material.color.set(0xffffff);
-            }
-          });
-        }
         scene.remove(drone);
         if(data.toolbar && document.body.contains(data.toolbar)) document.body.removeChild(data.toolbar);
         if(data.futureTrajectoryLine){
@@ -819,7 +1001,6 @@ function animate(){
     }
     if(missile.position.y <= 0){
       createExplosion(missile.position, 10, true);
-      // apply damage to houses and cars in radius
       applyBlastDamage(missile.position, 3, true);
 
       scene.remove(missile);
@@ -828,14 +1009,14 @@ function animate(){
   }
 
   // Update trails
-  for(let i=droneTrails.length-1;i>=0;i--){
-    const trail = droneTrails[i];
+  for(let i=trails.length-1;i>=0;i--){
+    const trail = trails[i];
     trail.mesh.material.opacity -= 0.03;
     if(trail.mesh.material.opacity <= 0){
       scene.remove(trail.mesh);
       trail.mesh.geometry.dispose();
       trail.mesh.material.dispose();
-      droneTrails.splice(i,1);
+      trails.splice(i,1);
     }
   }
 
@@ -853,7 +1034,7 @@ function animate(){
       if(drone.userData.toolbar && document.body.contains(drone.userData.toolbar)) document.body.removeChild(drone.userData.toolbar);
       if(drone.userData.futureTrajectoryLine){
         scene.remove(drone.userData.futureTrajectoryLine);
-        try{ drone.userData.futureTrajectoryLine.geometry.dispose(); drone.userData.futureTrajectoryLine.material.dispose(); }catch(e){}
+        try{ drone.userData.futureTrajectoryLine.geometry.dispose(); data.futureTrajectoryLine.material.dispose(); }catch(e){}
       }
       drones.splice(drones.indexOf(drone),1);
       whiteCount--;
@@ -862,20 +1043,11 @@ function animate(){
   while(redCount > targetRedDrones){
     const drone = drones.find(d=>d.userData.type==="red");
     if(drone){
-      if(drone.userData.target && drone.userData.target.userData.flashInterval){
-        clearInterval(drone.userData.target.userData.flashInterval);
-        drone.userData.target.userData.flashInterval = null;
-        drone.userData.target.traverse(child => {
-          if(child instanceof THREE.Mesh && !child.isLineSegments){
-            child.material.color.set(0xffffff);
-          }
-        });
-      }
       scene.remove(drone);
       if(drone.userData.toolbar && document.body.contains(drone.userData.toolbar)) document.body.removeChild(drone.userData.toolbar);
       if(drone.userData.futureTrajectoryLine){
         scene.remove(drone.userData.futureTrajectoryLine);
-        try{ drone.userData.futureTrajectoryLine.geometry.dispose(); drone.userData.futureTrajectoryLine.material.dispose(); }catch(e){}
+        try{ drone.userData.futureTrajectoryLine.geometry.dispose(); data.futureTrajectoryLine.material.dispose(); }catch(e){}
       }
       drones.splice(drones.indexOf(drone),1);
       redCount--;
@@ -913,30 +1085,18 @@ function animate(){
     addTrail(rocket, false, true);
 
     if(distanceToTarget < 0.1){
-      // explosion & damage in a small radius
       createExplosion(rocket.position);
       applyBlastDamage(rocket.position, 2.0, false);
 
-      if(missiles.includes(target)){
-        // destroy missile
-        scene.remove(rocket);
-        try{ rocket.geometry.dispose(); rocket.material.dispose(); }catch(e){}
+      scene.remove(rocket);
+      try{ rocket.geometry.dispose(); rocket.material.dispose(); }catch(e){}
+      if(missiles.includes(target) && target.userData.isFalling){
         scene.remove(target);
         missiles.splice(missiles.indexOf(target),1);
         rockets.splice(i,1);
+        score = Math.min(score+1,999);
+        updateScore();
       } else if(drones.includes(target)){
-        // destroy drone
-        if(target.userData.target && target.userData.target.userData.flashInterval){
-          clearInterval(target.userData.target.userData.flashInterval);
-          target.userData.target.userData.flashInterval = null;
-          target.userData.target.traverse(child => {
-            if(child instanceof THREE.Mesh && !child.isLineSegments){
-              child.material.color.set(0xffffff);
-            }
-          });
-        }
-        scene.remove(rocket);
-        try{ rocket.geometry.dispose(); rocket.material.dispose(); }catch(e){}
         scene.remove(target);
         if(target.userData.toolbar && document.body.contains(target.userData.toolbar)) document.body.removeChild(target.userData.toolbar);
         if(target.userData.futureTrajectoryLine){
@@ -944,6 +1104,10 @@ function animate(){
           try{ target.userData.futureTrajectoryLine.geometry.dispose(); target.userData.futureTrajectoryLine.material.dispose(); }catch(e){}
         }
         drones.splice(drones.indexOf(target),1);
+        rockets.splice(i,1);
+        score = Math.min(score+1,999);
+        updateScore();
+      } else {
         rockets.splice(i,1);
       }
     }
